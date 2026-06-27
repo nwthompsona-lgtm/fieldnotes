@@ -14,7 +14,11 @@ import Dexie, { type Table } from 'dexie';
 export interface WalkRow {
   /** uuid — also the upload idempotency key (walkId). */
   id: string;
+  /** Stable id derived from projectName; empty until the user names the project. */
   projectId: string;
+  /** Human-readable project label the user typed. Empty until set on the Review screen. */
+  projectName: string;
+  /** Name of whoever prepared the report. Empty until set on the Review screen. */
   superName: string;
   /** YYYY-MM-DD, device-local at walk start. */
   date: string;

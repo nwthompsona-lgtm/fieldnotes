@@ -7,6 +7,8 @@ import { recordSubmittedReport } from '../lib/reports';
 interface Props {
   walkId: string;
   observationCount: number;
+  /** Gate: Sync stays disabled until the required report details are filled in. */
+  canSync: boolean;
   onDone: () => void;
 }
 
@@ -15,7 +17,7 @@ interface Props {
  * per-attempt status line, retries on failure with backoff, and offers a clear
  * retry button. On success the acked observations are cleared by syncWalk.
  */
-export function SyncPanel({ walkId, observationCount, onDone }: Props) {
+export function SyncPanel({ walkId, observationCount, canSync, onDone }: Props) {
   const online = useOnline();
   const [progress, setProgress] = useState<SyncProgress | null>(null);
   const [running, setRunning] = useState(false);
@@ -49,6 +51,12 @@ export function SyncPanel({ walkId, observationCount, onDone }: Props) {
 
       {!online && (
         <p className="err">You're offline. Connect to Wi-Fi or cell data, then Sync. Nothing is lost.</p>
+      )}
+
+      {online && !canSync && !done && (
+        <p className="muted" style={{ marginTop: 0 }}>
+          Add your name and project above to send this report.
+        </p>
       )}
 
       {running && (
@@ -93,7 +101,11 @@ export function SyncPanel({ walkId, observationCount, onDone }: Props) {
           </button>
         </>
       ) : (
-        <button className="btn btn-primary btn-lg" disabled={running || !online} onClick={run}>
+        <button
+          className="btn btn-primary btn-lg"
+          disabled={running || !online || !canSync}
+          onClick={run}
+        >
           {running ? 'Syncing…' : isError ? 'Retry Sync' : '☁︎ Sync Now'}
         </button>
       )}

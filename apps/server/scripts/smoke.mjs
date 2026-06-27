@@ -32,10 +32,16 @@ const observations = [0, 1].map((i) => ({
   audioField: `audio:${oid(i)}`,
   audioMime: 'audio/webm',
 }));
+// Use a FRESH project id + a human label so the run also exercises the user-named-project
+// path: the server must create the Project row (reports.projectId FK) from projectName.
+const projectId = `smoke-proj-${Date.now()}`;
+const projectName = 'Riverside Tower B (Smoke)';
+const superName = 'Smoke Tester';
 const manifest = {
-  contractsVersion: '1.0.0',
-  projectId: 'pilot-project',
-  superName: 'Smoke Tester',
+  contractsVersion: '1.1.0',
+  projectId,
+  projectName,
+  superName,
   date: new Date().toISOString().slice(0, 10),
   walkId,
   observations,
@@ -65,6 +71,7 @@ assert(st.processing === 'ready', `pipeline reached ready (got ${st.processing}$
 
 const rep = await (await fetch(`${BASE}/api/reports/${reportId}`)).json();
 assert(rep.observations.length === 2, 'report has 2 observations');
+assert(rep.projectName === projectName, `report resolves the user-typed project name (got ${rep.projectName})`);
 assert(/^https?:\/\//.test(rep.observations[0].photos[0].blobRef), 'photo blobRef resolved to a URL');
 assert(typeof rep.observations[0].cleanedDescription === 'string' && rep.observations[0].cleanedDescription.length > 0, 'observation has a cleaned description');
 
@@ -81,6 +88,9 @@ assert(/\/r\//.test(fin.htmlUrl) && /\.pdf$/.test(fin.pdfUrl), 'finalize returns
 
 const html = await fetch(`${BASE}/r/${reportId}`);
 assert(html.status === 200 && (html.headers.get('content-type') || '').includes('text/html'), 'hosted HTML served');
+const htmlBody = await html.text();
+assert(htmlBody.includes('Prepared by') && htmlBody.includes(superName), 'report renders "Prepared by: <name>"');
+assert(htmlBody.includes(projectName), 'report renders the project name');
 const pdf = await fetch(`${BASE}/r/${reportId}.pdf`);
 const pdfBytes = await pdf.arrayBuffer();
 assert(pdf.status === 200 && pdfBytes.byteLength > 1000, `PDF served (${pdfBytes.byteLength} bytes)`);

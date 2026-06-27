@@ -41,6 +41,10 @@ export interface Repo {
   // projects
   getProject(id: string): Promise<Project | null>;
   upsertProject(p: Project): Promise<void>;
+  /** Ensure a project row exists for an uploaded report (the reports.projectId FK
+   *  requires it). Creates it with an empty glossary, or — if it already exists —
+   *  refreshes name/superName while PRESERVING any accumulated glossary. */
+  ensureProjectFromUpload(p: { id: string; name: string; superName: string }): Promise<void>;
 
   // ingest (idempotent on walkId)
   createReportFromUpload(

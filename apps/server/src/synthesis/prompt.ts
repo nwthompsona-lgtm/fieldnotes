@@ -86,7 +86,7 @@ export function buildUserMessage(input: SynthesisInput): string {
     .join('\n');
 
   return `PROJECT: ${input.project.name}
-SUPERINTENDENT: ${input.project.superName}
+PREPARED BY: ${input.project.superName}
 DATE: ${input.project.date}
 ${glossary}
 

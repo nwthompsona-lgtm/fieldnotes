@@ -8,9 +8,8 @@ export const API_BASE: string = (import.meta.env.VITE_API_BASE || 'http://localh
   '',
 );
 
-export const PROJECT_ID: string = import.meta.env.VITE_PROJECT_ID ?? 'pilot-project';
-
-export const SUPER_NAME: string = import.meta.env.VITE_SUPER_NAME ?? 'Pilot Super';
+// Project and preparer are NO LONGER baked in — the user enters them (required) on the
+// Review & Sync screen so nothing is attributed to a guessed default. See lib/profile.ts.
 
 export const UPLOAD_URL = `${API_BASE}/api/upload`;
 

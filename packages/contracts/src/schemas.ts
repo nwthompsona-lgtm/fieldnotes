@@ -13,7 +13,7 @@ import { z } from 'zod';
 
 /** Bump on any breaking change to the shapes below. The client stamps this into
  *  every upload manifest so the server can reject incompatible bundles. */
-export const CONTRACTS_VERSION = '1.0.0';
+export const CONTRACTS_VERSION = '1.1.0';
 
 // ---------------------------------------------------------------------------
 // Primitives
@@ -104,6 +104,8 @@ export type Observation = z.infer<typeof Observation>;
 export const Report = z.object({
   id: z.string(),
   projectId: z.string(),
+  /** Human-readable project label (resolved from the Project row) for display. */
+  projectName: z.string().optional(),
   /** Calendar date of the walk (YYYY-MM-DD). */
   date: z.string(),
   superName: z.string(),
@@ -171,6 +173,11 @@ export type UploadObservation = z.infer<typeof UploadObservation>;
 export const UploadManifest = z.object({
   contractsVersion: z.string(),
   projectId: z.string(),
+  /** Human-readable project label the user typed (e.g. "Tower B — Level 4"). Optional
+   *  for back-compat with v1.0.0 clients; when present the server creates/updates the
+   *  Project row (so reports attribute to the right project and its glossary accrues). */
+  projectName: z.string().optional(),
+  /** Name of whoever prepared the report (super, foreman, PM, owner's rep, …). */
   superName: z.string(),
   /** Walk date (YYYY-MM-DD), device-local. */
   date: z.string(),

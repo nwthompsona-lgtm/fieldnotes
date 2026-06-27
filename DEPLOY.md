@@ -56,11 +56,23 @@ Two separate Vercel projects from the same repo:
 
 | Project | Root Directory | Env |
 |---|---|---|
-| capture | `apps/capture` | `VITE_API_BASE`=<server URL>, `VITE_PROJECT_ID=pilot-project`, `VITE_SUPER_NAME`=<name> |
+| capture | `apps/capture` | `VITE_API_BASE`=<server URL>, `VITE_WEB_BASE`=<web URL> |
 | web | `apps/web` | `VITE_API_BASE`=<server URL> |
 
+> The preparer name and project are now entered by the user at report time (Review & Sync
+> screen) and remembered on-device — they are **no longer** baked via `VITE_SUPER_NAME` /
+> `VITE_PROJECT_ID`. `VITE_WEB_BASE` lets the capture app link to the review page after Sync.
+
 Both are Vite SPAs (build `npm run build`, output `dist`). Vite bakes `VITE_*` at build time, so
-set them before deploying and redeploy if the server URL changes. For the SPA routes
+set them before deploying and redeploy if the server URL changes.
+
+> **Deploy order (since contracts 1.1.0): server FIRST, then capture.** A v1.1.0 capture upload
+> carries a fresh, non-seeded `projectId` (a slug of the typed project name). An older server
+> that lacks `ensureProjectFromUpload` would reject it on the `reports.project_id → projects.id`
+> foreign key (HTTP 500), and the walk would stay stuck `pending` until the server catches up
+> (no data loss — it re-syncs once the server is current). So: push `master` (Render
+> auto-deploys), confirm `GET /healthz` shows the new `commit`, **then** publish the capture
+> build on Vercel. The reverse direction (old capture → new server) is safe. For the SPA routes
 (`/review/:id`, `/admin/:id`) ensure the host rewrites unknown paths to `index.html`
 (Vercel/Netlify do this for Vite by default; add a catch-all rewrite if not).
 

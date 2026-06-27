@@ -24,6 +24,9 @@ export function makeRepo(db: Db): Repo {
   async function assembleReport(id: string): Promise<Report | null> {
     const r = (await db.select().from(reports).where(eq(reports.id, id)).limit(1))[0];
     if (!r) return null;
+    const proj = (
+      await db.select({ name: projects.name }).from(projects).where(eq(projects.id, r.projectId)).limit(1)
+    )[0];
 
     const obsRows = await db
       .select()
@@ -65,6 +68,7 @@ export function makeRepo(db: Db): Repo {
     return {
       id: r.id,
       projectId: r.projectId,
+      projectName: proj?.name ?? undefined,
       date: r.date,
       superName: r.superName,
       summary: r.summary,
@@ -103,6 +107,18 @@ export function makeRepo(db: Db): Repo {
         .onConflictDoUpdate({
           target: projects.id,
           set: { name: p.name, superName: p.superName, glossary: p.glossary, baseLexiconRef: p.baseLexiconRef },
+        });
+    },
+
+    async ensureProjectFromUpload(p) {
+      // Insert with the column defaults (empty glossary, base lexicon ref). On conflict,
+      // only refresh the human fields — the glossary is curated/accumulated and must survive.
+      await db
+        .insert(projects)
+        .values({ id: p.id, name: p.name, superName: p.superName })
+        .onConflictDoUpdate({
+          target: projects.id,
+          set: { name: p.name, superName: p.superName },
         });
     },
 

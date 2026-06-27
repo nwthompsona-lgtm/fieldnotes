@@ -84,7 +84,7 @@ export function ReportDocument({ model }: { model: ReportRenderModel }) {
           <div className="meta">
             <div className="project">{prettyDate(model.date)}</div>
             <div>
-              Superintendent: <b>{model.superName}</b>
+              Prepared by: <b>{model.superName}</b>
             </div>
             <div>
               {model.observations.length} observation

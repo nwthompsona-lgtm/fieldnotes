@@ -260,10 +260,10 @@ function ReadyView({ report: initial, reportId }: { report: Report; reportId: st
               <b>{report.date}</b>
             </span>
             <span>
-              Project <b>{report.projectId}</b>
+              Project <b>{report.projectName ?? report.projectId}</b>
             </span>
             <span>
-              Super <b>{report.superName}</b>
+              Prepared by <b>{report.superName}</b>
             </span>
           </div>
         </div>

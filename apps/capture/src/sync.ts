@@ -80,6 +80,7 @@ async function buildUploadBody(walkId: string): Promise<{ form: FormData; obsCou
   const manifest = UploadManifest.parse({
     contractsVersion: CONTRACTS_VERSION,
     projectId: walk.projectId,
+    projectName: walk.projectName || undefined,
     superName: walk.superName,
     date: walk.date,
     walkId: walk.id,

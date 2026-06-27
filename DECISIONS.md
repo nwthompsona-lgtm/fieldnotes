@@ -120,6 +120,30 @@ four"); the summary is PM-trustworthy. Resisted over-tuning a prompt that's perf
 unmatched routes to `/index.html` so deep links (`/review/:id`, `/admin/:id`) work on static
 hosting (Vercel serves real files first, so assets + the service worker are unaffected).
 
+**D19. Preparer + project are captured per-report, not baked at build (contract → 1.1.0).**
+The pilot build baked `VITE_SUPER_NAME`/`VITE_PROJECT_ID` into every walk, so reports were
+attributed to a guessed default and "the project" was a single magic id. Per user feedback we
+now ask for both on the Review & Sync screen: **Your name** (remembered in `localStorage`,
+generically labeled "Prepared by" on the report — the user may be a foreman/PM/owner's rep, not
+only a superintendent) and **Project** (required; Sync is gated until filled; past labels feed a
+datalist). Values persist onto the durable Dexie walk row before Sync reads them. `projectId` is
+a deterministic slug of the label (`projectIdForName`) so re-using a label maps to the same
+server-side Project (and its accruing glossary).
+- Contract bumped **1.0.0 → 1.1.0** (additive, non-breaking): `UploadManifest.projectName?` and
+  `Report.projectName?` (both optional, so v1.0.0 clients and old un-synced "pending" walks still
+  upload — the server falls back to the seeded `pilot-project`).
+- Server: `reports.projectId` is a FK to `projects.id`, so a user-named project must exist first.
+  `ingest` calls `repo.ensureProjectFromUpload({id,name,superName})` when `projectName` is present
+  — inserts with an empty glossary, or on conflict updates **only** name/superName (the curated
+  glossary is preserved, never clobbered). `assembleReport` resolves `projects.name` into
+  `Report.projectName` for display. No DDL/migration needed (purely additive code).
+- **Deploy ordering matters:** the server must deploy *before* the new capture build — a new-build
+  upload carries a fresh, non-seeded `projectId`, which an old server (without
+  `ensureProjectFromUpload`) would reject on the FK. Server (Render) first, then capture (Vercel).
+- New typed projects start with an **empty** glossary (base construction lexicon still applies).
+  The curated `PILOT_GLOSSARY` only attaches to the seeded `pilot-project`; per-project STT biasing
+  for real project nouns is now keyed to whatever label the user actually uses (see [[A2]]).
+
 ## Assumptions (revisit if wrong)
 
 **A1. Single super, single project, hardcoded/magic-link auth** (spec §12). Pilot seeds

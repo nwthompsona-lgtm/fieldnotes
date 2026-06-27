@@ -5,10 +5,35 @@ from here + `ARCHITECTURE.md` + `DECISIONS.md`.
 
 Legend: ✅ done & verified · 🟡 in progress · ⬜ not started · ⏸️ blocked on checkpoint
 
-_Last updated: 2026-06-27 — ALL phases built + locally verified; Checkpoint B underway.
-Provider keys live (Anthropic/Deepgram/Neon/R2); pushed to GitHub; Render server deploy in
-flight. Synthesis IP validated with real claude-opus-4-8 (all fidelity rules hold). Remaining:
-Vercel front-end deploys + on-device test (Checkpoint A)._
+_Last updated: 2026-06-27 — ALL phases built + locally verified. Server LIVE on Render
+(https://fieldnotes-yglr.onrender.com) and the FULL CLOUD PATH IS PROVEN end-to-end with
+real audio: real speech → Deepgram → Claude → R2 + Neon → hosted PDF (npm run e2e:live).
+Three prod-only bugs found + fixed along the way (see below). Remaining: Vercel front-end
+deploys (in progress) + on-device test (Checkpoint A)._
+
+## Post-pilot-feedback UX (2026-06-27, after first real test)
+- **Capture → report handoff** made obvious: after Sync the capture app shows a "Review &
+  send report →" link and keeps a persistent "Submitted reports" list (was: no path from
+  "uploaded" to the review page). (commit 10ddfaa)
+- **Preparer + project captured per-report, not baked** (user feedback). The Review & Sync
+  screen now asks for "Your name" (remembered) + a required "Project" (datalist of past
+  labels); Sync is gated until both are filled. Report label is the generic "Prepared by".
+  Contracts bumped **1.0.0 → 1.1.0** (additive `projectName?`); server creates the Project
+  from the upload (FK-safe, glossary preserved). See DECISIONS **D19**. Verified: 4/4 builds,
+  15/15 server tests, HTTP smoke (fresh project created + "Prepared by" rendered), and the
+  capture form gating/persistence in-browser. Adversarial diff-review run pre-deploy; the one
+  real bug it found (unicode project labels colliding to one id) was fixed.
+  **Deploy order: server (Render) first, then capture (Vercel)** — see DEPLOY.md.
+
+## Prod bugs found + fixed via the real-audio e2e (none visible until a real walk)
+- **Render PDF render** — `playwright` npm had drifted to 1.61.1 vs the Docker image's
+  v1.49.0-jammy → Chromium failed to launch. Pinned both to 1.61.1. (commit 5c325c3)
+- **Anthropic 'Premature close'** — every synthesis call from Render dropped its connection
+  (Deepgram/R2/Neon fine; worked locally on Node 22, failed on the image's **Node 24**).
+  Streaming + retries didn't clear it; the root cause was the **15-month-old
+  @anthropic-ai/sdk 0.32.1** vs Node 24/undici 7. Upgraded SDK → **0.106.0**; fixed. Also
+  switched synthesis to streaming. (commits 33861a5, 65ee76e)
+- **/healthz** now reports `commit` + `node` for deploy/version confirmation.
 
 ---
 
@@ -73,10 +98,11 @@ service worker + manifest, app mounts with no console errors.
 - ⏸️ **A** — device verify spike (needs pilot iPhone; do at/after Vercel capture deploy).
 - 🟡 **B** — accounts/keys + deploy:
   - ✅ All 4 provider keys live + verified (`npm run verify:keys`): Anthropic opus-4-8, Deepgram nova-2, Neon, R2.
-  - ✅ Committed + pushed to GitHub (master); `render.yaml` blueprint; server auto-detects `RENDER_EXTERNAL_URL`.
-  - 🟡 Render server deploy in flight (user pasting secret env vars in Blueprint flow).
-  - ⬜ Vercel deploys for `apps/capture` + `apps/web` (`vercel.json` SPA configs added).
-  - ✅ Synthesis prompt self-tested with real Claude (`npm run tune`); prod test data cleaned.
+  - ✅ **Server LIVE** on Render (Docker, Standard 2 GB): https://fieldnotes-yglr.onrender.com.
+  - ✅ **Full cloud path proven end-to-end with real audio** (`npm run e2e:live`): real speech →
+    Deepgram → Claude → R2 + Neon → hosted HTML + PDF (HTTP 200). Fidelity held even through an STT error.
+  - ⬜ Vercel deploys for `apps/capture` + `apps/web` (`vercel.json` SPA configs in repo; in progress).
+  - ✅ Synthesis prompt self-tested with real Claude (`npm run tune`); prod test data cleaned (`npm run clean:test`).
 - ⏸️ **C** — final review (live URL + acceptance + onboarding).
 
 ### Self-test / ops scripts (apps/server/scripts)

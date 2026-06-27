@@ -66,6 +66,16 @@ export async function processUpload(args: ProcessUploadArgs): Promise<UploadResu
     }
   }
 
+  // A user-named project must have a Project row before the report's FK can point at it.
+  // (v1.0.0 clients send no projectName and rely on the seeded pilot project.)
+  if (manifest.projectName?.trim()) {
+    await repo.ensureProjectFromUpload({
+      id: manifest.projectId,
+      name: manifest.projectName.trim(),
+      superName: manifest.superName,
+    });
+  }
+
   const result = await repo.createReportFromUpload(manifest, media);
   return {
     reportId: result.reportId,

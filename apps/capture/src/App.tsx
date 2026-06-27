@@ -4,6 +4,7 @@ import { Onboarding } from './components/Onboarding';
 import { TopBar } from './components/TopBar';
 import { CaptureFlow } from './components/CaptureFlow';
 import { RunningList } from './components/RunningList';
+import { ReportDetailsForm } from './components/ReportDetailsForm';
 import { SyncPanel } from './components/SyncPanel';
 import {
   finishWalk,
@@ -232,6 +233,7 @@ function ReviewScreen({
   onSyncDone: () => void;
 }) {
   const [count, setCount] = useState(0);
+  const [detailsReady, setDetailsReady] = useState(false);
   useEffect(() => {
     getObservationsForWalk(pendingWalkId).then((o) => setCount(o.length));
   }, [pendingWalkId]);
@@ -242,7 +244,13 @@ function ReviewScreen({
       <RunningList walkId={pendingWalkId} refreshKey={count} onChanged={() => {
         getObservationsForWalk(pendingWalkId).then((o) => setCount(o.length));
       }} />
-      <SyncPanel walkId={pendingWalkId} observationCount={count} onDone={onSyncDone} />
+      <ReportDetailsForm walkId={pendingWalkId} onReadyChange={setDetailsReady} />
+      <SyncPanel
+        walkId={pendingWalkId}
+        observationCount={count}
+        canSync={detailsReady}
+        onDone={onSyncDone}
+      />
       <button className="btn btn-ghost" onClick={onBackToCapture}>
         ← Back to capture
       </button>

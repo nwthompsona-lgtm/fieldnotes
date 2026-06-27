@@ -83,7 +83,7 @@ export function AdminListPage() {
             <tr>
               <th>Date</th>
               <th>Project</th>
-              <th>Superintendent</th>
+              <th>Prepared by</th>
               <th>Status</th>
               <th>Processing</th>
               <th>Observations</th>
@@ -97,7 +97,7 @@ export function AdminListPage() {
                   <td>
                     <Link to={`/admin/${encodeURIComponent(r.id)}`}>{r.date}</Link>
                   </td>
-                  <td>{r.projectId}</td>
+                  <td>{r.projectName ?? r.projectId}</td>
                   <td>{r.superName}</td>
                   <td>
                     <StatusBadge status={r.status} />

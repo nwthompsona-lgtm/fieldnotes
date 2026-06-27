@@ -301,6 +301,45 @@ body {
   color: var(--brand);
 }
 
+/* ---- form fields (report details) ---- */
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 14px;
+}
+.field:last-child {
+  margin-bottom: 0;
+}
+.field > label {
+  font-weight: 700;
+  font-size: 16px;
+}
+.field > .hint {
+  color: var(--muted);
+  font-size: 14px;
+}
+.input {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  min-height: var(--touch);
+  border: 2px solid var(--line);
+  border-radius: var(--radius);
+  padding: 0 16px;
+  font-size: 19px;
+  font-weight: 600;
+  color: var(--ink);
+  background: #fff;
+}
+.input:focus {
+  outline: none;
+  border-color: var(--brand-300);
+}
+.input.invalid {
+  border-color: var(--danger);
+}
+
 /* ---- progress ---- */
 .bar {
   height: 16px;

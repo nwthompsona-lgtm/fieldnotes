@@ -84,10 +84,10 @@ export function AdminDetailPage() {
           <h1>{report.date}</h1>
           <div className="report-meta">
             <span>
-              Project <b>{report.projectId}</b>
+              Project <b>{report.projectName ?? report.projectId}</b>
             </span>
             <span>
-              Super <b>{report.superName}</b>
+              Prepared by <b>{report.superName}</b>
             </span>
             <span>
               <StatusBadge status={report.status} />

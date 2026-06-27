@@ -5,23 +5,39 @@
 import { db, type WalkRow, type ObservationRow, type PhotoRow, type AudioRow } from './db';
 import { uuid } from './lib/ids';
 import { localDateYmd } from './lib/format';
-import { PROJECT_ID, SUPER_NAME } from './config';
 import type { CompressedImage } from './lib/image';
 
-/** Get the active capturing walk, creating one if none exists. */
+/** Get the active capturing walk, creating one if none exists. Project + preparer are
+ *  intentionally blank: the user fills them in (required) on the Review & Sync screen,
+ *  so nothing is ever attributed to a guessed default. */
 export async function getOrCreateActiveWalk(): Promise<WalkRow> {
   const existing = await db.walks.where('status').equals('capturing').first();
   if (existing) return existing;
   const walk: WalkRow = {
     id: uuid(),
-    projectId: PROJECT_ID,
-    superName: SUPER_NAME,
+    projectId: '',
+    projectName: '',
+    superName: '',
     date: localDateYmd(),
     createdAt: new Date().toISOString(),
     status: 'capturing',
   };
   await db.walks.add(walk);
   return walk;
+}
+
+/** Persist the report details the user enters on the Review screen onto the walk row,
+ *  so a refresh/crash before Sync never loses them and Sync reads them from the store. */
+export async function setWalkDetails(
+  walkId: string,
+  details: { projectId: string; projectName: string; superName: string },
+): Promise<void> {
+  await db.walks.update(walkId, details);
+}
+
+/** Read a single walk row (for hydrating the Review-screen details form). */
+export async function getWalk(walkId: string): Promise<WalkRow | undefined> {
+  return db.walks.get(walkId);
 }
 
 /** Walks that are finished capturing and awaiting/needing upload. */
