@@ -13,7 +13,9 @@
     "dryrun": "tsx scripts/dryrun.ts",
     "seed": "tsx scripts/seed.ts",
     "db:init": "tsx scripts/db-init.ts",
-    "verify:keys": "tsx scripts/verify-keys.ts"
+    "verify:keys": "tsx scripts/verify-keys.ts",
+    "tune": "tsx scripts/tune.ts",
+    "clean:test": "tsx scripts/clean-test-data.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.32.1",

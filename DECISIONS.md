@@ -98,6 +98,28 @@ directly: they're tightly coupled to the wiring + repo and SDK-version-sensitive
 provider especially). Verified by *running* the real pipeline (`npm run dryrun` → real PDF),
 which is stronger than delegate-then-review for mechanical plumbing. Logged per §2 autonomy.
 
+**D16. Self-tests are isolated from prod infra.** Once `.env` held live Neon + R2 creds,
+`npm run dryrun` would write synthetic walks into the pilot's real DB/bucket (and the
+fixed obs-ids collided on the persistent DB). Fixes: a `FIELDREPORT_LOCAL=1` config knob
+forces pglite + local-disk even when prod creds are present; `dryrun` sets it (plus
+`STT_PROVIDER=mock`) by default via a dynamic config import + run-unique ids. Added
+`STT_PROVIDER`/`SYNTHESIS_PROVIDER` override knobs (force mock/real independently — lets
+the curated corpus feed real Claude for prompt tuning). Cleaned the one stray dryrun
+report out of prod Neon (`npm run clean:test`). Tooling: `scripts/tune.ts` (corpus →
+real synthesis, printed for eyeballing) + `scripts/clean-test-data.ts`.
+
+**D17. Synthesis prompt validated with live `claude-opus-4-8` — no changes needed.** Ran the
+curated corpus through real Claude (`npm run tune`) and rendered it through the template.
+All fidelity rules held: "prepped for the pour" stayed prepped (never "poured"), tentative
+work ("supposed to start") stayed tentative, the garbled clip became a neutral placeholder
+(no fabrication), and proper nouns (JMA, Najib, EIFS, RFI) were spelled correctly. Prose is
+professional; trade/area inference is sharper than the mock (pulled "Level 4" from "here on
+four"); the summary is PM-trustworthy. Resisted over-tuning a prompt that's performing well.
+
+**D18. Vercel SPA configs added.** `apps/web/vercel.json` + `apps/capture/vercel.json` rewrite
+unmatched routes to `/index.html` so deep links (`/review/:id`, `/admin/:id`) work on static
+hosting (Vercel serves real files first, so assets + the service worker are unaffected).
+
 ## Assumptions (revisit if wrong)
 
 **A1. Single super, single project, hardcoded/magic-link auth** (spec §12). Pilot seeds

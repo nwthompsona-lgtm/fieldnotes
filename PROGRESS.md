@@ -5,9 +5,10 @@ from here + `ARCHITECTURE.md` + `DECISIONS.md`.
 
 Legend: ✅ done & verified · 🟡 in progress · ⬜ not started · ⏸️ blocked on checkpoint
 
-_Last updated: 2026-06-27 — ALL phases built + locally verified. Full monorepo builds for
-production; 19 tests pass; HTTP smoke passes; review + admin UIs screenshot-verified; real
-PDF produced. Remaining work is the human checkpoints (accounts/keys + on-device test)._
+_Last updated: 2026-06-27 — ALL phases built + locally verified; Checkpoint B underway.
+Provider keys live (Anthropic/Deepgram/Neon/R2); pushed to GitHub; Render server deploy in
+flight. Synthesis IP validated with real claude-opus-4-8 (all fidelity rules hold). Remaining:
+Vercel front-end deploys + on-device test (Checkpoint A)._
 
 ---
 
@@ -69,6 +70,15 @@ service worker + manifest, app mounts with no console errors.
 - ⏸️ Acceptance checklist (§10) end-to-end on a live URL + real iPhone (needs deploy + device — Checkpoints A/B/C).
 
 ## Checkpoints (spec §11)
-- ⏸️ **A** — device verify spike (needs pilot phone).
-- ⏸️ **B** — accounts/keys + deploy (needs human credentials).
+- ⏸️ **A** — device verify spike (needs pilot iPhone; do at/after Vercel capture deploy).
+- 🟡 **B** — accounts/keys + deploy:
+  - ✅ All 4 provider keys live + verified (`npm run verify:keys`): Anthropic opus-4-8, Deepgram nova-2, Neon, R2.
+  - ✅ Committed + pushed to GitHub (master); `render.yaml` blueprint; server auto-detects `RENDER_EXTERNAL_URL`.
+  - 🟡 Render server deploy in flight (user pasting secret env vars in Blueprint flow).
+  - ⬜ Vercel deploys for `apps/capture` + `apps/web` (`vercel.json` SPA configs added).
+  - ✅ Synthesis prompt self-tested with real Claude (`npm run tune`); prod test data cleaned.
 - ⏸️ **C** — final review (live URL + acceptance + onboarding).
+
+### Self-test / ops scripts (apps/server/scripts)
+`dryrun` (local, real prose), `tune` (corpus→real synthesis), `smoke.mjs` (HTTP e2e),
+`verify-keys`, `clean:test` (purge synthetic walks), `shoot.mjs`/`web-shot.mjs` (visual QA).

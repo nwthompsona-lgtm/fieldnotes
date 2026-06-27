@@ -1,27 +1,33 @@
 /**
- * End-to-end offline dry run (spec §10, §13). Seeds a synthetic walk (generated photos
- * + dummy audio), runs the REAL ingest + pipeline (mock STT draws the curated corpus;
- * synthesis is Claude if ANTHROPIC_API_KEY is set, else mock), and writes the rendered
- * report.html + report.pdf + report.json to apps/server/dryrun-output/ for inspection.
+ * End-to-end offline dry run (spec §10, §13). Seeds a synthetic walk (generated photos +
+ * dummy audio), runs the REAL ingest + pipeline, and writes report.html/pdf/json to
+ * apps/server/dryrun-output/ for inspection.
  *
- *   npm run dryrun            # from repo root
+ *   npm run dryrun -w @fieldreport/server
+ *
+ * Defaults (overridable via env): FIELDREPORT_LOCAL=1 so it NEVER touches the prod Neon
+ * DB / R2 bucket, and STT_PROVIDER=mock so transcripts come from the curated corpus
+ * (dummy audio would otherwise yield empty real-STT transcripts). Synthesis stays real
+ * when ANTHROPIC_API_KEY is set — so this doubles as the prompt-tuning render.
  */
+// Set self-test defaults BEFORE config is (dynamically) imported below.
+process.env.FIELDREPORT_LOCAL ??= '1';
+process.env.STT_PROVIDER ??= 'mock';
+
 import { mkdir, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import sharp from 'sharp';
-import {
-  audioFieldFor,
-  CONTRACTS_VERSION,
-  type UploadManifest,
-} from '@fieldreport/contracts';
-import { config } from '../src/config.js';
+import { audioFieldFor, CONTRACTS_VERSION, type UploadManifest } from '@fieldreport/contracts';
 import { buildDeps } from '../src/deps.js';
 import { processUpload } from '../src/ingest/index.js';
 import { runPipeline } from '../src/pipeline.js';
 import { storageKeys } from '../src/storage/types.js';
 import { closeBrowser } from '../src/render/index.js';
 
-const N = 10; // observations
+// Dynamic import so the env defaults above are honored when config evaluates.
+const { config } = await import('../src/config.js');
+
+const N = 10;
 const COLORS = ['#2f6f57', '#3b5b8c', '#8c5a3b', '#5a3b8c', '#3b8c7a', '#8c3b5a'];
 
 async function makePhoto(order: number, idx: number): Promise<Uint8Array> {
@@ -40,20 +46,22 @@ async function main() {
   const now = new Date();
   const date = now.toISOString().slice(0, 10);
   const walkId = `dryrun-${now.getTime()}`;
+  // Run-unique ids so the script is safe to re-run against a persistent DB.
+  const nonce = now.getTime().toString(36);
 
   const files = new Map<string, Uint8Array>();
   const observations: UploadManifest['observations'] = [];
 
   for (let order = 0; order < N; order++) {
-    const obsId = `obs-${order}`;
+    const obsId = `obs-${nonce}-${order}`;
     const photoCount = order % 3 === 0 ? 2 : 1;
     const photos = [];
     for (let i = 0; i < photoCount; i++) {
-      const photoId = `pho-${order}-${i}`;
+      const photoId = `pho-${nonce}-${order}-${i}`;
       files.set(photoId, await makePhoto(order, i));
       photos.push({ id: photoId, width: 1200, height: 900 });
     }
-    files.set(audioFieldFor(obsId), new Uint8Array([1, 2, 3, 4])); // dummy; mock STT ignores bytes
+    files.set(audioFieldFor(obsId), new Uint8Array([1, 2, 3, 4]));
     observations.push({
       id: obsId,
       order,
@@ -74,9 +82,11 @@ async function main() {
     client: { ua: 'dryrun', installed: true, tz: 'UTC' },
   };
 
+  console.log(
+    `[dryrun] db=${config.db.url ? 'postgres' : 'pglite'} storage=${deps.storage.name} stt=${deps.transcriber.name} synthesis=${deps.synthesizer.name}`,
+  );
   console.log(`[dryrun] ingesting synthetic walk: ${N} observations, ${files.size} media parts`);
   const result = await processUpload({ manifest, files, storage: deps.storage, repo: deps.repo });
-  console.log(`[dryrun] reportId=${result.reportId} — running pipeline (stt=${deps.transcriber.name}, synthesis=${deps.synthesizer.name})`);
   await runPipeline(deps, result.reportId);
 
   const report = await deps.repo.getReport(result.reportId);

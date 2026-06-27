@@ -12,6 +12,10 @@ function bool(v: string | undefined, dflt = false): boolean {
 
 const env = process.env;
 
+/** Force embedded pglite + local-disk storage even when prod DATABASE_URL/S3_BUCKET are
+ *  present — so self-tests (dryrun) never touch the pilot's real Neon DB / R2 bucket. */
+const forceLocal = bool(env.FIELDREPORT_LOCAL);
+
 export const config = {
   port: Number(env.PORT ?? 8787),
   host: env.HOST ?? '0.0.0.0',
@@ -24,14 +28,14 @@ export const config = {
   ).replace(/\/$/, ''),
 
   db: {
-    /** When set -> prod Postgres (Neon). When unset -> embedded pglite (dev/test). */
-    url: env.DATABASE_URL,
+    /** When set -> prod Postgres (Neon). When unset (or FIELDREPORT_LOCAL) -> pglite. */
+    url: forceLocal ? undefined : env.DATABASE_URL,
     pgliteDir: env.PGLITE_DIR ?? '.data/pglite',
   },
 
   storage: {
     /** 's3' when S3_BUCKET present (works for S3 or Cloudflare R2), else 'local'. */
-    driver: (env.S3_BUCKET ? 's3' : 'local') as 's3' | 'local',
+    driver: (forceLocal ? 'local' : env.S3_BUCKET ? 's3' : 'local') as 's3' | 'local',
     localDir: env.STORAGE_DIR ?? '.data/storage',
     s3: {
       bucket: env.S3_BUCKET,
@@ -44,16 +48,19 @@ export const config = {
   },
 
   stt: {
-    /** 'deepgram' when key present, else 'mock'. */
-    provider: (env.DEEPGRAM_API_KEY ? 'deepgram' : 'mock') as 'deepgram' | 'mock',
+    /** 'deepgram' when key present, else 'mock'. STT_PROVIDER forces either (handy for
+     *  prompt tuning: mock STT supplies the curated corpus while synthesis stays real). */
+    provider: ((env.STT_PROVIDER as 'deepgram' | 'mock' | undefined) ??
+      (env.DEEPGRAM_API_KEY ? 'deepgram' : 'mock')) as 'deepgram' | 'mock',
     deepgramApiKey: env.DEEPGRAM_API_KEY,
     model: env.DEEPGRAM_MODEL ?? 'nova-2',
     language: env.STT_LANGUAGE ?? 'en-US',
   },
 
   synthesis: {
-    /** 'claude' when key present, else 'mock'. */
-    provider: (env.ANTHROPIC_API_KEY ? 'claude' : 'mock') as 'claude' | 'mock',
+    /** 'claude' when key present, else 'mock'. SYNTHESIS_PROVIDER forces either. */
+    provider: ((env.SYNTHESIS_PROVIDER as 'claude' | 'mock' | undefined) ??
+      (env.ANTHROPIC_API_KEY ? 'claude' : 'mock')) as 'claude' | 'mock',
     anthropicApiKey: env.ANTHROPIC_API_KEY,
     // Default to the most capable model (the synthesis prose is the product's IP);
     // swap to claude-sonnet-4-6 via env for lower cost/latency.
