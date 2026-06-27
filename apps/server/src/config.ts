@@ -1,0 +1,83 @@
+/**
+ * Runtime config + provider selection (spec §7 local-dev story). Real providers
+ * activate when their keys are present; otherwise deterministic mocks run so the whole
+ * pipeline works offline with no accounts. Everything is env-driven.
+ */
+import 'dotenv/config';
+
+function bool(v: string | undefined, dflt = false): boolean {
+  if (v == null) return dflt;
+  return ['1', 'true', 'yes', 'on'].includes(v.toLowerCase());
+}
+
+const env = process.env;
+
+export const config = {
+  port: Number(env.PORT ?? 8787),
+  host: env.HOST ?? '0.0.0.0',
+  /** Absolute base used to build htmlUrl/pdfUrl + media URLs. Falls back to Render's
+   *  auto-injected RENDER_EXTERNAL_URL so no manual PUBLIC_BASE_URL/redeploy is needed. */
+  publicBaseUrl: (
+    env.PUBLIC_BASE_URL ??
+    env.RENDER_EXTERNAL_URL ??
+    `http://localhost:${env.PORT ?? 8787}`
+  ).replace(/\/$/, ''),
+
+  db: {
+    /** When set -> prod Postgres (Neon). When unset -> embedded pglite (dev/test). */
+    url: env.DATABASE_URL,
+    pgliteDir: env.PGLITE_DIR ?? '.data/pglite',
+  },
+
+  storage: {
+    /** 's3' when S3_BUCKET present (works for S3 or Cloudflare R2), else 'local'. */
+    driver: (env.S3_BUCKET ? 's3' : 'local') as 's3' | 'local',
+    localDir: env.STORAGE_DIR ?? '.data/storage',
+    s3: {
+      bucket: env.S3_BUCKET,
+      region: env.S3_REGION ?? 'auto',
+      endpoint: env.S3_ENDPOINT, // R2: https://<acct>.r2.cloudflarestorage.com
+      accessKeyId: env.S3_ACCESS_KEY_ID,
+      secretAccessKey: env.S3_SECRET_ACCESS_KEY,
+      publicBaseUrl: env.S3_PUBLIC_BASE_URL, // optional CDN/public bucket base
+    },
+  },
+
+  stt: {
+    /** 'deepgram' when key present, else 'mock'. */
+    provider: (env.DEEPGRAM_API_KEY ? 'deepgram' : 'mock') as 'deepgram' | 'mock',
+    deepgramApiKey: env.DEEPGRAM_API_KEY,
+    model: env.DEEPGRAM_MODEL ?? 'nova-2',
+    language: env.STT_LANGUAGE ?? 'en-US',
+  },
+
+  synthesis: {
+    /** 'claude' when key present, else 'mock'. */
+    provider: (env.ANTHROPIC_API_KEY ? 'claude' : 'mock') as 'claude' | 'mock',
+    anthropicApiKey: env.ANTHROPIC_API_KEY,
+    // Default to the most capable model (the synthesis prose is the product's IP);
+    // swap to claude-sonnet-4-6 via env for lower cost/latency.
+    model: env.ANTHROPIC_MODEL ?? 'claude-opus-4-8',
+    maxTokens: Number(env.ANTHROPIC_MAX_TOKENS ?? 8192),
+  },
+
+  langsmith: {
+    enabled: bool(env.LANGCHAIN_TRACING_V2) || bool(env.LANGSMITH_TRACING),
+    apiKey: env.LANGSMITH_API_KEY ?? env.LANGCHAIN_API_KEY,
+    project: env.LANGCHAIN_PROJECT ?? env.LANGSMITH_PROJECT ?? 'fieldreport',
+  },
+
+  admin: {
+    /** Bearer token gating /api/admin/*. Generated/required for prod. */
+    token: env.ADMIN_TOKEN ?? 'dev-admin-token',
+  },
+
+  /** The single pilot project (spec §12: single super, single project). */
+  pilot: {
+    projectId: env.PILOT_PROJECT_ID ?? 'pilot-project',
+    projectName: env.PILOT_PROJECT_NAME ?? 'Watson Island',
+    superName: env.PILOT_SUPER_NAME ?? 'Pilot Super',
+  },
+} as const;
+
+export type AppConfig = typeof config;

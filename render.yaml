@@ -1,0 +1,46 @@
+# Render Blueprint for the FieldReport server (Docker).
+# In Render: New → Blueprint → pick this repo → it reads this file → you paste the
+# secret values (the ones marked sync:false) → Deploy. PUBLIC_BASE_URL is auto-detected
+# from Render's RENDER_EXTERNAL_URL, so there's no manual URL step or redeploy.
+#
+# NOTE ON PLAN: PDF rendering runs headless Chromium, which is memory-hungry. "standard"
+# (2 GB) renders reliably. "starter" (512 MB) may OOM on larger reports — bump to standard
+# if you see the PDF step crash. Downgrade later if your reports stay small.
+services:
+  - type: web
+    name: fieldreport-server
+    runtime: docker
+    repo: # filled automatically when you connect the repo in Render
+    dockerfilePath: ./apps/server/Dockerfile
+    dockerContext: .
+    plan: standard
+    region: oregon
+    healthCheckPath: /healthz
+    autoDeploy: true
+    envVars:
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: ANTHROPIC_MODEL
+        value: claude-opus-4-8
+      - key: DEEPGRAM_API_KEY
+        sync: false
+      - key: DEEPGRAM_MODEL
+        value: nova-2
+      - key: DATABASE_URL
+        sync: false
+      - key: S3_BUCKET
+        sync: false
+      - key: S3_ENDPOINT
+        sync: false
+      - key: S3_REGION
+        value: auto
+      - key: S3_ACCESS_KEY_ID
+        sync: false
+      - key: S3_SECRET_ACCESS_KEY
+        sync: false
+      - key: ADMIN_TOKEN
+        sync: false
+      - key: PILOT_PROJECT_NAME
+        value: Watson Island
+      - key: PILOT_SUPER_NAME
+        sync: false

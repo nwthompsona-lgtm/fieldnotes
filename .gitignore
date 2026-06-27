@@ -1,0 +1,42 @@
+# deps
+node_modules/
+.pnp.*
+
+# builds
+dist/
+build/
+*.tsbuildinfo
+apps/capture/dev-dist/
+apps/*/dist/
+
+# env / secrets — NEVER commit
+.env
+.env.*
+!.env.example
+
+# local dev data (object storage + pglite)
+.data/
+*.local
+
+# logs
+*.log
+npm-debug.log*
+
+# os / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# machine-local Claude Code config
+.claude/settings.local.json
+.claude/launch.json
+
+# playwright
+/test-results/
+/playwright-report/
+/blob-report/
+.playwright/
+
+# generated dry-run artifacts (any package)
+dryrun-output/

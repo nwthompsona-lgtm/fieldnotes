@@ -1,0 +1,14 @@
+**/node_modules
+**/dist
+**/dev-dist
+**/.data
+**/dryrun-output
+**/.env
+**/.env.*
+!**/.env.example
+.git
+**/*.log
+**/.vscode
+**/.idea
+**/test-results
+**/playwright-report
