@@ -48,6 +48,7 @@ export function registerRoutes(app: FastifyInstance, deps: ServerDeps): void {
     synthesis: deps.synthesizer.name,
     // Render injects RENDER_GIT_COMMIT — lets us confirm which commit is live after a deploy.
     commit: process.env.RENDER_GIT_COMMIT?.slice(0, 7) ?? 'dev',
+    node: process.version,
   }));
 
   // ── Upload (multipart: manifest field + media parts) ──────────────────────

@@ -40,3 +40,8 @@ Thumbs.db
 
 # generated dry-run artifacts (any package)
 dryrun-output/
+
+# vercel deploy token (local only)
+.vercel.token
+.vercel
+
