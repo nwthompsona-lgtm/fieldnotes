@@ -10,7 +10,6 @@ services:
   - type: web
     name: fieldreport-server
     runtime: docker
-    repo: # filled automatically when you connect the repo in Render
     dockerfilePath: ./apps/server/Dockerfile
     dockerContext: .
     plan: standard
