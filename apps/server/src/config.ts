@@ -62,9 +62,9 @@ export const config = {
     provider: ((env.SYNTHESIS_PROVIDER as 'claude' | 'mock' | undefined) ??
       (env.ANTHROPIC_API_KEY ? 'claude' : 'mock')) as 'claude' | 'mock',
     anthropicApiKey: env.ANTHROPIC_API_KEY,
-    // Default to the most capable model (the synthesis prose is the product's IP);
-    // swap to claude-sonnet-4-6 via env for lower cost/latency.
-    model: env.ANTHROPIC_MODEL ?? 'claude-opus-4-8',
+    // Synthesis model. Default Sonnet 4.6 for lower cost/latency (user's call, D12);
+    // set ANTHROPIC_MODEL=claude-opus-4-8 to go back to the most capable model.
+    model: env.ANTHROPIC_MODEL ?? 'claude-sonnet-4-6',
     maxTokens: Number(env.ANTHROPIC_MAX_TOKENS ?? 8192),
   },
 

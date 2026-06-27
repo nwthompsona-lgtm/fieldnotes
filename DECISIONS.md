@@ -78,11 +78,13 @@ stable `messages.create` + a system prompt that mandates JSON, then tolerant ext
 `SynthesisOutput.safeParse` + one repair retry + id-reconciliation. Version-proof and
 model-agnostic. If a key is added and structured outputs are wanted, swap inside `claude.ts`.
 
-**D12. Synthesis default model = `claude-opus-4-8`.** Per the claude-api skill (don't downgrade
-for cost — the user's call). The prose is the product's IP, so default to the most capable
-model; `ANTHROPIC_MODEL=claude-sonnet-4-6` is the documented cost/latency override. No `thinking`
-param (opus-4-8 runs without thinking when omitted) to keep the output budget for the JSON and
-avoid truncation; tunable later.
+**D12. Synthesis default model = `claude-sonnet-4-6`** (was `claude-opus-4-8`). The user opted
+for Sonnet for lower cost/latency (their call per the claude-api skill — never downgrade for cost
+without the user asking; they asked). `ANTHROPIC_MODEL=claude-opus-4-8` reverts to the most capable
+model. No `thinking` param (runs without thinking when omitted — lowest latency; the JSON-fidelity
+rules are prompt-enforced, not thinking-dependent). Note: the synthesis prompt was validated on
+Opus (D17); the fidelity rules are model-agnostic, but spot-check a real Sonnet walk before relying
+on it. Streaming + maxRetries:4 retained (the prod "Premature close" fix).
 
 **D13. Photo `blobRef` resolved to URLs in API responses.** `GET /api/reports/:id` (and admin)
 map each stored photo key → `storage.url(key)` so the web client can render images directly.

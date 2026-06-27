@@ -3,6 +3,7 @@
  * -> ready. Runs async after upload responds; the client polls /status. Any failure is
  * recorded as processing='failed' with the error so the admin/review UIs can surface it.
  */
+import { traceable } from 'langsmith/traceable';
 import type { ServerDeps } from './deps.js';
 import type { SynthesisInput } from './synthesis/types.js';
 import { assembleKeyterms } from './stt/index.js';
@@ -50,7 +51,19 @@ export async function renderAndStore(
   return { htmlKey, pdfKey };
 }
 
+/** Public entry. When LangSmith is enabled, trace the whole report as one run so each
+ *  report is a single inspectable trace (synthesis nests under it automatically). The
+ *  closure takes no args so the trace doesn't log `deps` (clients/secrets) as inputs. */
 export async function runPipeline(deps: ServerDeps, reportId: string): Promise<void> {
+  if (!deps.config.langsmith.enabled) return runReportPipeline(deps, reportId);
+  await traceable(() => runReportPipeline(deps, reportId), {
+    name: 'fieldreport.report',
+    project_name: deps.config.langsmith.project,
+    metadata: { reportId },
+  })();
+}
+
+async function runReportPipeline(deps: ServerDeps, reportId: string): Promise<void> {
   const { repo, storage, transcriber, synthesizer, config } = deps;
   try {
     const projectId = await repo.getReportProjectId(reportId);

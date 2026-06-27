@@ -40,6 +40,7 @@ export class ClaudeSynthesizer implements Synthesizer {
     this.run = cfg.langsmith.enabled
       ? (traceable(core, {
           name: 'fieldreport.synthesize',
+          project_name: cfg.langsmith.project,
           metadata: { promptVersion: SYNTHESIS_PROMPT_VERSION, model: this.model },
         }) as typeof core)
       : core;

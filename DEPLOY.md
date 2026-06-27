@@ -50,6 +50,23 @@ generate one and set the same env/secrets).
 
 ---
 
+## Observability (LangSmith) — optional
+
+Synthesis (and the per-report pipeline) are wired with LangSmith `traceable`, a no-op until
+enabled. To monitor runs / troubleshoot prod, set these env vars on the Render service and
+redeploy (the server picks them up at boot — no code change):
+
+| Var | Value |
+|---|---|
+| `LANGSMITH_TRACING` | `true` (or `LANGCHAIN_TRACING_V2=true`) |
+| `LANGSMITH_API_KEY` | your LangSmith key (`lsv2_...`) — create at smith.langchain.com → Settings → API Keys (also accepts `LANGCHAIN_API_KEY`) |
+| `LANGSMITH_PROJECT` | `fieldreport` (optional; defaults to `fieldreport`; also accepts `LANGCHAIN_PROJECT`) |
+
+Each synthesized report then appears in the LangSmith **fieldreport** project as a
+`fieldreport.report` trace with the `fieldreport.synthesize` call nested under it (you see the
+transcripts in and the polished JSON out, per report). Without `LANGSMITH_TRACING` set it stays
+off and costs nothing.
+
 ## Capture + Web (Vercel)
 
 Two separate Vercel projects from the same repo:

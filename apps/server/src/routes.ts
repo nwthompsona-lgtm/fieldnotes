@@ -46,6 +46,9 @@ export function registerRoutes(app: FastifyInstance, deps: ServerDeps): void {
     storage: storage.name,
     stt: deps.transcriber.name,
     synthesis: deps.synthesizer.name,
+    // Active synthesis model + whether LangSmith tracing is on — confirm both after a deploy.
+    model: deps.synthesizer.name === 'claude' ? config.synthesis.model : null,
+    langsmith: config.langsmith.enabled,
     // Render injects RENDER_GIT_COMMIT — lets us confirm which commit is live after a deploy.
     commit: process.env.RENDER_GIT_COMMIT?.slice(0, 7) ?? 'dev',
     node: process.version,
