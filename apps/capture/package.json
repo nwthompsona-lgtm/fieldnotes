@@ -13,6 +13,8 @@
   },
   "dependencies": {
     "@fieldreport/contracts": "*",
+    "@fontsource/ibm-plex-sans": "^5.2.8",
+    "@fontsource/space-grotesk": "^5.2.10",
     "browser-image-compression": "^2.0.2",
     "dexie": "^4.0.10",
     "react": "^18.3.1",

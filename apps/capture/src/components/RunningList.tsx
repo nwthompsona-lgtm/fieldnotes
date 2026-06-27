@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { db, type ObservationRow } from '../db';
 import { deleteObservation, getObservationsForWalk } from '../repo';
 import { PhotoThumb } from './PhotoThumb';
+import { Icon } from './Icon';
 
 interface Props {
   walkId: string;
@@ -17,13 +18,9 @@ interface Row {
   hasAudio: boolean;
 }
 
-/**
- * Running list of THIS walk's observations in order (spec §5), each with a
- * thumbnail and a DELETE action. (Per-photo retake/delete lives in the capture
- * flow before save; here we offer delete + a quick "add a photo" retake path
- * by deleting and re-capturing is out of scope of this list — delete is the
- * destructive review action.)
- */
+/** This walk's observations in order, each a captured row with a thumbnail + delete.
+ *  Area/trade aren't known until the server synthesizes the report, so locally we
+ *  show the honest capture facts: index, photo count, and whether a voice note exists. */
 export function RunningList({ walkId, refreshKey, onChanged }: Props) {
   const [rows, setRows] = useState<Row[]>([]);
 
@@ -49,9 +46,7 @@ export function RunningList({ walkId, refreshKey, onChanged }: Props) {
     };
   }, [walkId, refreshKey]);
 
-  if (rows.length === 0) {
-    return <p className="muted center">No observations yet. Take your first one above.</p>;
-  }
+  if (rows.length === 0) return null;
 
   async function onDelete(obsId: string) {
     if (!confirm('Delete this observation? This cannot be undone.')) return;
@@ -60,26 +55,50 @@ export function RunningList({ walkId, refreshKey, onChanged }: Props) {
   }
 
   return (
-    <div className="list">
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
       {rows.map((r) => (
-        <div className="obs-item" key={r.obs.id}>
-          {r.firstPhotoId ? (
-            <PhotoThumb photoId={r.firstPhotoId} />
-          ) : (
-            <div className="thumb" />
-          )}
-          <div className="obs-meta">
-            <div className="ttl">Observation #{r.obs.order + 1}</div>
-            <div className="sub">
-              {r.photoCount} photo{r.photoCount === 1 ? '' : 's'} · {r.hasAudio ? 'voice note ✓' : 'no voice note'}
+        <div
+          key={r.obs.id}
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: 13,
+            background: 'var(--surface)',
+            border: '1px solid var(--line)',
+            borderRadius: 'var(--radius-sm)',
+            padding: 10,
+          }}
+        >
+          <div
+            style={{
+              position: 'relative',
+              width: 58,
+              height: 58,
+              borderRadius: 11,
+              overflow: 'hidden',
+              background: 'var(--surface-2)',
+              flex: '0 0 auto',
+            }}
+          >
+            {r.firstPhotoId ? (
+              <PhotoThumb photoId={r.firstPhotoId} className="thumb-cover" />
+            ) : null}
+          </div>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ fontWeight: 700, fontSize: 15, color: 'var(--fg)' }}>
+              Observation {r.obs.order + 1}
+            </div>
+            <div className="muted" style={{ fontSize: 13, marginTop: 2 }}>
+              {r.photoCount} photo{r.photoCount === 1 ? '' : 's'} ·{' '}
+              {r.hasAudio ? 'voice note ✓' : 'no voice note'}
             </div>
           </div>
           <button
-            className="btn btn-danger"
-            style={{ width: 'auto', padding: '0 16px', minHeight: 48 }}
+            className="icon-btn danger"
+            aria-label="Delete observation"
             onClick={() => onDelete(r.obs.id)}
           >
-            Delete
+            <Icon name="trash" size={17} />
           </button>
         </div>
       ))}

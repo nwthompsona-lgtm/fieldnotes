@@ -45,3 +45,6 @@ dryrun-output/
 .vercel.token
 .vercel
 
+# design handoff bundle (local reference only)
+.design-handoff/
+

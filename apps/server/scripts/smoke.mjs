@@ -21,9 +21,12 @@ const health = await (await fetch(`${BASE}/healthz`)).json();
 console.log('health:', health);
 assert(health.ok === true, 'healthz ok');
 
-const walkId = `smoke-walk-${Date.now()}`;
-const oid = (i) => `smoke-obs-${i}`;
-const pid = (i) => `smoke-photo-${i}`;
+// One stamp per run so EVERY id is unique — the walk, observations, and photos.
+// (A fixed obs id would collide on a persisted dev DB across runs.)
+const stamp = Date.now();
+const walkId = `smoke-walk-${stamp}`;
+const oid = (i) => `smoke-obs-${stamp}-${i}`;
+const pid = (i) => `smoke-photo-${stamp}-${i}`;
 const observations = [0, 1].map((i) => ({
   id: oid(i),
   order: i,
