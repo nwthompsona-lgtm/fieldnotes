@@ -15,7 +15,8 @@
     "db:init": "tsx scripts/db-init.ts",
     "verify:keys": "tsx scripts/verify-keys.ts",
     "tune": "tsx scripts/tune.ts",
-    "clean:test": "tsx scripts/clean-test-data.ts"
+    "clean:test": "tsx scripts/clean-test-data.ts",
+    "e2e:live": "tsx scripts/e2e-live.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.32.1",
@@ -32,7 +33,7 @@
     "fastify": "^4.28.1",
     "langsmith": "^0.2.5",
     "pg": "^8.13.1",
-    "playwright": "^1.49.0",
+    "playwright": "1.61.1",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "sharp": "^0.33.5",

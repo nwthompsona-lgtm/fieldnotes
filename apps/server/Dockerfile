@@ -2,8 +2,9 @@
 #   docker build -f apps/server/Dockerfile -t fieldreport-server .
 #
 # Base = official Playwright image: Chromium + all system libs preinstalled, so the PDF
-# renderer works with no extra setup. Tag must match the `playwright` npm version.
-FROM mcr.microsoft.com/playwright:v1.49.0-jammy
+# renderer works with no extra setup. The tag MUST match the pinned `playwright` npm
+# version in package.json (currently 1.61.1) — a mismatch makes Chromium fail to launch.
+FROM mcr.microsoft.com/playwright:v1.61.1-jammy
 
 WORKDIR /app
 ENV NODE_ENV=production

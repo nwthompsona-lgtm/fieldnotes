@@ -10,7 +10,7 @@ import { getDb } from '../src/db/index.js';
 import { reports } from '../src/db/schema.js';
 
 const db = await getDb(config);
-const patterns = ['dryrun-%', 'smoke-%', 'smoke-walk-%', 'tune-%'];
+const patterns = ['dryrun-%', 'smoke-%', 'smoke-walk-%', 'tune-%', 'e2e-%'];
 
 const deleted = await db
   .delete(reports)
