@@ -14,6 +14,8 @@ import {
 } from './repo';
 import { formatBytes } from './lib/format';
 import { useOnline } from './hooks/useOnline';
+import { getSubmittedReports, type SubmittedReport } from './lib/reports';
+import { reviewUrl } from './config';
 
 type Screen = 'capture' | 'review';
 
@@ -160,10 +162,62 @@ export function App() {
                 You have a walk pending upload →
               </button>
             )}
+
+            <SubmittedReports refreshKey={refreshKey} />
           </>
         )}
       </main>
     </div>
+  );
+}
+
+/** Reports submitted from this device, each linking to its review/send page. Gives the
+ *  super a durable way back to a report after the post-sync screen is gone. */
+function SubmittedReports({ refreshKey }: { refreshKey: number }) {
+  const [reports, setReports] = useState<SubmittedReport[]>([]);
+  useEffect(() => {
+    setReports(getSubmittedReports());
+  }, [refreshKey]);
+
+  if (reports.length === 0) return null;
+  return (
+    <>
+      <div className="section-title">Submitted reports</div>
+      <div className="card" style={{ padding: '4px 14px' }}>
+        {reports.map((r) => (
+          <a
+            key={r.id}
+            href={reviewUrl(r.id)}
+            target="_blank"
+            rel="noopener noreferrer"
+            style={{
+              display: 'flex',
+              justifyContent: 'space-between',
+              alignItems: 'center',
+              gap: 12,
+              padding: '12px 0',
+              borderBottom: '1px solid var(--line, #e3e8e5)',
+              textDecoration: 'none',
+              color: 'inherit',
+            }}
+          >
+            <span>
+              {new Date(r.at).toLocaleString([], {
+                month: 'short',
+                day: 'numeric',
+                hour: 'numeric',
+                minute: '2-digit',
+              })}
+              <br />
+              <span className="muted">
+                {r.count} observation{r.count === 1 ? '' : 's'}
+              </span>
+            </span>
+            <span style={{ fontWeight: 700, color: 'var(--brand, #0f3d2e)' }}>Review →</span>
+          </a>
+        ))}
+      </div>
+    </>
   );
 }
 

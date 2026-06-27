@@ -14,6 +14,13 @@ export const SUPER_NAME: string = import.meta.env.VITE_SUPER_NAME ?? 'Pilot Supe
 
 export const UPLOAD_URL = `${API_BASE}/api/upload`;
 
+// Where the super reviews / edits / sends the finished report (the online web app).
+// Defaults to the pilot web deploy; override with VITE_WEB_BASE in dev.
+export const WEB_BASE: string = (
+  import.meta.env.VITE_WEB_BASE || 'https://fieldnotes-web.vercel.app'
+).replace(/\/$/, '');
+export const reviewUrl = (reportId: string): string => `${WEB_BASE}/review/${reportId}`;
+
 // Image compression targets (spec §4).
 export const IMAGE_MAX_DIMENSION = 1600;
 export const IMAGE_QUALITY = 0.7;

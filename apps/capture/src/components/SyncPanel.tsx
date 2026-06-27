@@ -1,6 +1,8 @@
 import { useState } from 'react';
 import { useOnline } from '../hooks/useOnline';
 import { syncWalk, type SyncProgress } from '../sync';
+import { reviewUrl } from '../config';
+import { recordSubmittedReport } from '../lib/reports';
 
 interface Props {
   walkId: string;
@@ -18,12 +20,15 @@ export function SyncPanel({ walkId, observationCount, onDone }: Props) {
   const [progress, setProgress] = useState<SyncProgress | null>(null);
   const [running, setRunning] = useState(false);
   const [done, setDone] = useState(false);
+  const [reportId, setReportId] = useState<string | null>(null);
 
   async function run() {
     setRunning(true);
     setProgress({ totalObservations: observationCount, fraction: 0, phase: 'building' });
     try {
-      await syncWalk(walkId, setProgress);
+      const result = await syncWalk(walkId, setProgress);
+      recordSubmittedReport(result.reportId, observationCount);
+      setReportId(result.reportId);
       setDone(true);
     } catch {
       // error surfaced via progress.phase === 'error'
@@ -68,9 +73,23 @@ export function SyncPanel({ walkId, observationCount, onDone }: Props) {
 
       {done ? (
         <>
-          <p style={{ color: 'var(--ok)', fontWeight: 800 }}>✓ Uploaded. Local copy cleared.</p>
-          <button className="btn btn-brand" onClick={onDone}>
-            Done
+          <p style={{ color: 'var(--ok)', fontWeight: 800 }}>✓ Uploaded — your report is being written up.</p>
+          <p className="muted" style={{ marginTop: 0 }}>
+            Transcribing and drafting takes about a minute. Open the review page to read it,
+            fix any wording, and send — it updates on its own while it's preparing.
+          </p>
+          {reportId && (
+            <a
+              className="btn btn-brand btn-lg"
+              href={reviewUrl(reportId)}
+              target="_blank"
+              rel="noopener noreferrer"
+            >
+              Review &amp; send report →
+            </a>
+          )}
+          <button className="btn btn-ghost" onClick={onDone}>
+            Start a new walk
           </button>
         </>
       ) : (
