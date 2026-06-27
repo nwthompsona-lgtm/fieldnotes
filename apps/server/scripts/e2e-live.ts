@@ -56,12 +56,13 @@ async function main() {
   console.log('[e2e] health', await (await fetch(`${BASE}/healthz`)).json());
 
   const walkId = `e2e-${Date.now()}`;
+  const nonce = Date.now().toString(36); // run-unique so ids never collide on the persistent DB
   const fd = new FormData();
   const observations = [];
   for (let k = 0; k < PICK.length; k++) {
     const text = MOCK_TRANSCRIPTS[PICK[k]!]!;
-    const oid = `e2e-obs-${k}`;
-    const pid = `e2e-photo-${k}`;
+    const oid = `e2e-obs-${nonce}-${k}`;
+    const pid = `e2e-photo-${nonce}-${k}`;
     console.log(`[e2e] synthesizing speech #${k + 1}: "${text.slice(0, 56)}…"`);
     const wav = await ttsWav(text, resolve(tmp, `${oid}.wav`));
     fd.set(pid, new Blob([await makePhoto(k)], { type: 'image/jpeg' }), `${pid}.jpg`);

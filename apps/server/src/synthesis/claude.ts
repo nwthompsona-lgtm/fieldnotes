@@ -32,7 +32,8 @@ export class ClaudeSynthesizer implements Synthesizer {
 
   constructor(cfg: AppConfig) {
     if (!cfg.synthesis.anthropicApiKey) throw new Error('ANTHROPIC_API_KEY required for claude');
-    this.client = new Anthropic({ apiKey: cfg.synthesis.anthropicApiKey });
+    // maxRetries: retry transient connection/5xx/429 errors (real walks WILL hit these).
+    this.client = new Anthropic({ apiKey: cfg.synthesis.anthropicApiKey, maxRetries: 4 });
     this.model = cfg.synthesis.model;
     this.maxTokens = cfg.synthesis.maxTokens;
     const core = (input: SynthesisInput) => this.execute(input);
@@ -49,12 +50,16 @@ export class ClaudeSynthesizer implements Synthesizer {
   }
 
   private async callModel(userMessage: string): Promise<string> {
-    const res = await this.client.messages.create({
+    // Stream rather than a single non-streaming request: a ~15s synthesis response left
+    // the connection idle long enough for an intermediary (Render egress) to drop it with
+    // "Premature close". Streaming keeps bytes flowing and avoids that (claude-api guidance).
+    const stream = this.client.messages.stream({
       model: this.model,
       max_tokens: this.maxTokens,
       system: SYSTEM_PROMPT,
       messages: [{ role: 'user', content: userMessage }],
     });
+    const res = await stream.finalMessage();
     if ((res.stop_reason as string) === 'refusal') {
       throw new Error('synthesis refused by safety classifier');
     }
