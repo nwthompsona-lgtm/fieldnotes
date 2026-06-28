@@ -45,6 +45,8 @@ export function registerRoutes(app: FastifyInstance, deps: ServerDeps): void {
     ok: true,
     storage: storage.name,
     stt: deps.transcriber.name,
+    // Active STT model (nova-2 vs nova-3) — confirm the transcription tuning after a deploy.
+    sttModel: deps.transcriber.name === 'deepgram' ? config.stt.model : null,
     synthesis: deps.synthesizer.name,
     // Active synthesis model + whether LangSmith tracing is on — confirm both after a deploy.
     model: deps.synthesizer.name === 'claude' ? config.synthesis.model : null,

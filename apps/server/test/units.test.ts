@@ -19,11 +19,11 @@ describe('ids', () => {
 
 describe('assembleKeyterms (spec §8a)', () => {
   it('puts the project glossary first and includes the base lexicon, deduped', () => {
-    const terms = assembleKeyterms(['Watson Island', 'JMA', 'eifs']);
+    const terms = assembleKeyterms(['Watson Island', 'JMA', 'Metal Stud']);
     expect(terms[0]).toBe('Watson Island');
     expect(terms).toContain('JMA');
-    // 'eifs' duplicates base lexicon 'EIFS' (case-insensitive) — only one survives.
-    expect(terms.filter((t) => t.toLowerCase() === 'eifs')).toHaveLength(1);
+    // 'Metal Stud' duplicates base lexicon 'metal stud' (case-insensitive) — only one survives.
+    expect(terms.filter((t) => t.toLowerCase() === 'metal stud')).toHaveLength(1);
     expect(terms.length).toBeGreaterThan(BASE_CONSTRUCTION_LEXICON.length);
   });
 });

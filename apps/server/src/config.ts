@@ -53,7 +53,9 @@ export const config = {
     provider: ((env.STT_PROVIDER as 'deepgram' | 'mock' | undefined) ??
       (env.DEEPGRAM_API_KEY ? 'deepgram' : 'mock')) as 'deepgram' | 'mock',
     deepgramApiKey: env.DEEPGRAM_API_KEY,
-    model: env.DEEPGRAM_MODEL ?? 'nova-2',
+    // nova-3 gets the better `keyterm` prompting path (deepgram.ts) for domain vocabulary;
+    // nova-2 only had legacy `keywords` boosting. Override with DEEPGRAM_MODEL if needed.
+    model: env.DEEPGRAM_MODEL ?? 'nova-3',
     language: env.STT_LANGUAGE ?? 'en-US',
   },
 

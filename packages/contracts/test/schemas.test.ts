@@ -11,7 +11,7 @@ describe('contracts', () => {
   it('exposes a version and a non-trivial base lexicon', () => {
     expect(CONTRACTS_VERSION).toMatch(/^\d+\.\d+\.\d+$/);
     expect(BASE_CONSTRUCTION_LEXICON.length).toBeGreaterThan(40);
-    expect(BASE_CONSTRUCTION_LEXICON).toContain('EIFS');
+    expect(BASE_CONSTRUCTION_LEXICON).toContain('metal stud');
   });
 
   it('validates a well-formed observation', () => {

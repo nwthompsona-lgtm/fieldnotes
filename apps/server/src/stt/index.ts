@@ -20,7 +20,7 @@ export function assembleKeyterms(glossary: string[]): string[] {
       out.push(t);
     }
   }
-  return out.slice(0, 500); // Deepgram practical ceiling
+  return out.slice(0, 100); // nova-3 keyterm hard limit (English monolingual); glossary is first so it's never truncated
 }
 
 export type { Transcriber } from './types.js';
