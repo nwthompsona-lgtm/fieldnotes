@@ -65,6 +65,21 @@ export async function runPipeline(deps: ServerDeps, reportId: string): Promise<v
 
 async function runReportPipeline(deps: ServerDeps, reportId: string): Promise<void> {
   const { repo, storage, transcriber, synthesizer, config } = deps;
+  // Trace a pipeline step as a child run so the report waterfall shows the full flow
+  // (transcribe → synthesize → render). No-op when tracing is off.
+  const step = <T>(
+    name: string,
+    runType: string,
+    inputs: Record<string, unknown>,
+    fn: () => Promise<T>,
+  ): Promise<T> =>
+    config.langsmith.enabled
+      ? traceable((_in: Record<string, unknown>) => fn(), {
+          name,
+          run_type: runType,
+          project_name: config.langsmith.project,
+        })(inputs)
+      : fn();
   try {
     const projectId = await repo.getReportProjectId(reportId);
     const project = projectId ? await repo.getProject(projectId) : null;
@@ -77,9 +92,20 @@ async function runReportPipeline(deps: ServerDeps, reportId: string): Promise<vo
       if (!o.audioKey) return;
       try {
         const audio = await storage.get(o.audioKey);
-        const res = await transcriber.transcribe(
-          { bytes: audio.bytes, mime: o.audioMime ?? 'audio/webm', observationId: o.id },
-          { keyterms, language: config.stt.language },
+        const res = await step(
+          'transcribe',
+          'tool',
+          {
+            observationId: o.id,
+            mime: o.audioMime ?? 'audio/webm',
+            language: config.stt.language,
+            keyterms: keyterms.length,
+          },
+          () =>
+            transcriber.transcribe(
+              { bytes: audio.bytes, mime: o.audioMime ?? 'audio/webm', observationId: o.id },
+              { keyterms, language: config.stt.language },
+            ),
         );
         await repo.setTranscript(o.id, res.text, res.confidence);
       } catch {
@@ -112,7 +138,7 @@ async function runReportPipeline(deps: ServerDeps, reportId: string): Promise<vo
 
     // 3. Render draft HTML + PDF.
     await repo.setProcessing(reportId, 'rendering');
-    await renderAndStore(deps, reportId, false);
+    await step('render', 'tool', { reportId }, () => renderAndStore(deps, reportId, false));
 
     // 4. Ready for review.
     await repo.setProcessing(reportId, 'ready');

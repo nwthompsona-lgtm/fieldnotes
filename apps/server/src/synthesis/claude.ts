@@ -39,6 +39,8 @@ export class ClaudeSynthesizer implements Synthesizer {
   private client: Anthropic;
   private model: string;
   private maxTokens: number;
+  private tracingEnabled: boolean;
+  private project: string;
   private run: (input: SynthesisInput) => Promise<SynthesisOutput>;
   private runSummary: (input: SummaryInput) => Promise<string>;
 
@@ -48,6 +50,8 @@ export class ClaudeSynthesizer implements Synthesizer {
     this.client = new Anthropic({ apiKey: cfg.synthesis.anthropicApiKey, maxRetries: 4 });
     this.model = cfg.synthesis.model;
     this.maxTokens = cfg.synthesis.maxTokens;
+    this.tracingEnabled = cfg.langsmith.enabled;
+    this.project = cfg.langsmith.project;
     const core = (input: SynthesisInput) => this.execute(input);
     const summaryCore = (input: SummaryInput) => this.executeSummary(input);
     this.run = cfg.langsmith.enabled
@@ -74,42 +78,99 @@ export class ClaudeSynthesizer implements Synthesizer {
     return this.runSummary(input);
   }
 
-  private async executeSummary(input: SummaryInput): Promise<string> {
-    const stream = this.client.messages.stream({
-      model: this.model,
-      max_tokens: 600,
-      system: SUMMARY_SYSTEM_PROMPT,
-      messages: [{ role: 'user', content: buildSummaryMessage(input) }],
-    });
-    const res = await stream.finalMessage();
-    if ((res.stop_reason as string) === 'refusal') {
-      throw new Error('summary refused by safety classifier');
-    }
-    return res.content
-      .filter((b): b is Anthropic.TextBlock => b.type === 'text')
-      .map((b) => b.text)
-      .join('\n')
-      .trim();
-  }
-
-  private async callModel(userMessage: string): Promise<string> {
-    // Stream rather than a single non-streaming request: a ~15s synthesis response left
-    // the connection idle long enough for an intermediary (Render egress) to drop it with
-    // "Premature close". Streaming keeps bytes flowing and avoids that (claude-api guidance).
-    const stream = this.client.messages.stream({
-      model: this.model,
-      max_tokens: this.maxTokens,
-      system: SYSTEM_PROMPT,
-      messages: [{ role: 'user', content: userMessage }],
-    });
-    const res = await stream.finalMessage();
-    if ((res.stop_reason as string) === 'refusal') {
-      throw new Error('synthesis refused by safety classifier');
-    }
-    return res.content
+  /** Concatenated assistant text from a Claude message. */
+  private static textOf(msg: Anthropic.Message): string {
+    return msg.content
       .filter((b): b is Anthropic.TextBlock => b.type === 'text')
       .map((b) => b.text)
       .join('\n');
+  }
+
+  /**
+   * One streaming Claude call. When LangSmith is on it's traced as a nested `llm` run, so the
+   * system prompt, the user message, and token usage are all inspectable in the trace.
+   * (langsmith 0.2.x ships no Anthropic SDK wrapper, so we instrument the call ourselves.)
+   *
+   * Stream rather than a single non-streaming request: a ~15s synthesis response left the
+   * connection idle long enough for an intermediary (Render egress) to drop it with
+   * "Premature close". Streaming keeps bytes flowing and avoids that (claude-api guidance).
+   */
+  private streamMessage(
+    runName: string,
+    system: string,
+    userMessage: string,
+    maxTokens: number,
+  ): Promise<Anthropic.Message> {
+    const call = () =>
+      this.client.messages
+        .stream({
+          model: this.model,
+          max_tokens: maxTokens,
+          system,
+          messages: [{ role: 'user', content: userMessage }],
+        })
+        .finalMessage();
+    if (!this.tracingEnabled) return call();
+    return traceable(call, {
+      name: runName,
+      run_type: 'llm',
+      project_name: this.project,
+      metadata: { ls_provider: 'anthropic', ls_model_name: this.model },
+      // The wrapped call takes no args; supply the LLM input/output we want shown in the trace
+      // (system as the first message so LangSmith renders it as a chat with the system prompt).
+      processInputs: () => ({
+        model: this.model,
+        max_tokens: maxTokens,
+        messages: [
+          { role: 'system', content: system },
+          { role: 'user', content: userMessage },
+        ],
+      }),
+      processOutputs: (o) => {
+        const m = o as Partial<Anthropic.Message> & {
+          usage?: { input_tokens: number; output_tokens: number };
+        };
+        return {
+          role: 'assistant',
+          content: Array.isArray(m.content) ? ClaudeSynthesizer.textOf(m as Anthropic.Message) : undefined,
+          ...(m.usage
+            ? {
+                usage_metadata: {
+                  input_tokens: m.usage.input_tokens,
+                  output_tokens: m.usage.output_tokens,
+                  total_tokens: m.usage.input_tokens + m.usage.output_tokens,
+                },
+              }
+            : {}),
+        };
+      },
+    })();
+  }
+
+  private async executeSummary(input: SummaryInput): Promise<string> {
+    const res = await this.streamMessage(
+      'anthropic.resummarize',
+      SUMMARY_SYSTEM_PROMPT,
+      buildSummaryMessage(input),
+      600,
+    );
+    if ((res.stop_reason as string) === 'refusal') {
+      throw new Error('summary refused by safety classifier');
+    }
+    return ClaudeSynthesizer.textOf(res).trim();
+  }
+
+  private async callModel(userMessage: string): Promise<string> {
+    const res = await this.streamMessage(
+      'anthropic.synthesize',
+      SYSTEM_PROMPT,
+      userMessage,
+      this.maxTokens,
+    );
+    if ((res.stop_reason as string) === 'refusal') {
+      throw new Error('synthesis refused by safety classifier');
+    }
+    return ClaudeSynthesizer.textOf(res);
   }
 
   private tryParse(text: string): SynthesisOutput | null {
