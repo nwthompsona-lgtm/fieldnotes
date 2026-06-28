@@ -37,6 +37,28 @@ export interface ProcessingObservation {
   photoCount: number;
 }
 
+/** Quality signals for one observation: the AI's first draft vs the (possibly edited)
+ *  final, plus the STT confidence. Powers edit-distance + sent-unmodified metrics. */
+export interface ObservationQuality {
+  id: string;
+  cleanedDescription: string | null;
+  aiCleanedDescription: string | null;
+  transcriptConfidence: number | null;
+}
+
+/** Per-report quality signals for LangSmith feedback + the admin metrics rollup. */
+export interface ReportQuality {
+  id: string;
+  /** Root LangSmith run id, if tracing was on when this report was processed. */
+  runId: string | null;
+  status: ReportStatus;
+  processing: ProcessingStatus;
+  createdAt: string;
+  summary: string;
+  aiSummary: string | null;
+  observations: ObservationQuality[];
+}
+
 export interface Repo {
   // projects
   getProject(id: string): Promise<Project | null>;
@@ -66,8 +88,14 @@ export interface Repo {
   setTranscript(observationId: string, text: string, confidence?: number): Promise<void>;
   applySynthesis(reportId: string, out: SynthesisOutput): Promise<void>;
   setRenderArtifacts(id: string, keys: { htmlKey: string; pdfKey: string }): Promise<void>;
+  /** Store the root LangSmith run id so review outcomes can be attached to the trace. */
+  setLangsmithRunId(id: string, runId: string): Promise<void>;
 
   // review gate
   applyEdit(id: string, edit: ReportEdit): Promise<Report | null>;
   finalize(id: string): Promise<Report | null>;
+
+  // observability
+  getReportQuality(id: string): Promise<ReportQuality | null>;
+  listReportQuality(): Promise<ReportQuality[]>;
 }

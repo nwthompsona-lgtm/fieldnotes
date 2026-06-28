@@ -14,6 +14,8 @@ import type { ServerDeps } from './deps.js';
 import { processUpload } from './ingest/index.js';
 import { runPipeline, renderAndStore } from './pipeline.js';
 import { storageKeys } from './storage/types.js';
+import { reportQualityMetrics, computeRollup } from './quality.js';
+import { recordRunFeedback } from './observability.js';
 
 export function registerRoutes(app: FastifyInstance, deps: ServerDeps): void {
   const { repo, storage, config } = deps;
@@ -151,6 +153,13 @@ export function registerRoutes(app: FastifyInstance, deps: ServerDeps): void {
     await renderAndStore(deps, req.params.id, true);
     const r = await repo.finalize(req.params.id);
     if (!r) return reply.code(409).send({ error: 'could not finalize' });
+    // Close the loop: attach review outcomes (edit distance, sent-unmodified) to the trace.
+    // Fire-and-forget so observability never delays or fails the finalize response.
+    if (config.langsmith.enabled) {
+      void emitReviewFeedback(deps, req.params.id).catch((err) =>
+        app.log.error({ err, reportId: req.params.id }, 'review feedback failed'),
+      );
+    }
     return resolveReport(r);
   });
 
@@ -198,6 +207,10 @@ export function registerRoutes(app: FastifyInstance, deps: ServerDeps): void {
       return Promise.all(reports.map(resolveReport));
     });
 
+    // Quality + reliability rollup across all reports (KPIs: success rate, sent-unmodified
+    // rate, avg edit distance, transcription confidence). See MONITORING.md.
+    admin.get('/api/admin/metrics', async () => computeRollup(await repo.listReportQuality()));
+
     admin.get<{ Params: { id: string } }>('/api/admin/reports/:id', async (req, reply) => {
       const report = await repo.getReport(req.params.id);
       if (!report) return reply.code(404).send({ error: 'not found' });
@@ -227,6 +240,19 @@ export function registerRoutes(app: FastifyInstance, deps: ServerDeps): void {
       const view: AdminReportView = { report: await resolveReport(report), observations };
       return view;
     });
+  });
+}
+
+/** After review/finalize, attach the review outcomes to the report's LangSmith run so the
+ *  trace records how much the super changed the AI draft. Best-effort; never throws. */
+async function emitReviewFeedback(deps: ServerDeps, id: string): Promise<void> {
+  const q = await deps.repo.getReportQuality(id);
+  if (!q?.runId) return;
+  const m = reportQualityMetrics(q);
+  await recordRunFeedback(true, q.runId, {
+    sent_unmodified: m.sentUnmodified == null ? undefined : m.sentUnmodified ? 1 : 0,
+    obs_edit_distance: m.avgObsEditDistance ?? undefined,
+    summary_edit_distance: m.summaryEditDistance ?? undefined,
   });
 }
 

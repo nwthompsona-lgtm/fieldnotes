@@ -36,6 +36,12 @@ export const reports = pgTable(
     date: text('date').notNull(), // YYYY-MM-DD
     superName: text('super_name').notNull(),
     summary: text('summary').notNull().default(''),
+    /** The AI's first-draft summary, snapshotted once at synthesis. Never touched by edits,
+     *  so summary-vs-aiSummary is a durable "how much did the human change" signal. */
+    aiSummary: text('ai_summary'),
+    /** Root LangSmith run id for this report's pipeline, so review outcomes (edit distance,
+     *  sent-unmodified) can be attached back to the trace as feedback. */
+    langsmithRunId: text('langsmith_run_id'),
     status: text('status').$type<ReportStatus>().notNull().default('draft'),
     processing: text('processing').$type<ProcessingStatus>().notNull().default('uploaded'),
     processingError: text('processing_error'),
@@ -66,6 +72,9 @@ export const observations = pgTable(
     transcript: text('transcript'),
     transcriptConfidence: real('transcript_confidence'),
     cleanedDescription: text('cleaned_description'),
+    /** The AI's first-draft polished description, snapshotted once at synthesis. Compared
+     *  against cleanedDescription to measure how much the super corrected the AI/transcript. */
+    aiCleanedDescription: text('ai_cleaned_description'),
     trade: text('trade'),
     area: text('area'),
   },

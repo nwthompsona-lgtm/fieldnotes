@@ -21,6 +21,8 @@ CREATE TABLE IF NOT EXISTS reports (
   date text NOT NULL,
   super_name text NOT NULL,
   summary text NOT NULL DEFAULT '',
+  ai_summary text,
+  langsmith_run_id text,
   status text NOT NULL DEFAULT 'draft',
   processing text NOT NULL DEFAULT 'uploaded',
   processing_error text,
@@ -29,6 +31,8 @@ CREATE TABLE IF NOT EXISTS reports (
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now()
 );
+ALTER TABLE reports ADD COLUMN IF NOT EXISTS ai_summary text;
+ALTER TABLE reports ADD COLUMN IF NOT EXISTS langsmith_run_id text;
 CREATE UNIQUE INDEX IF NOT EXISTS reports_walk_id_uq ON reports (walk_id);
 CREATE INDEX IF NOT EXISTS reports_project_idx ON reports (project_id);
 CREATE TABLE IF NOT EXISTS observations (
@@ -42,9 +46,11 @@ CREATE TABLE IF NOT EXISTS observations (
   transcript text,
   transcript_confidence real,
   cleaned_description text,
+  ai_cleaned_description text,
   trade text,
   area text
 );
+ALTER TABLE observations ADD COLUMN IF NOT EXISTS ai_cleaned_description text;
 CREATE INDEX IF NOT EXISTS observations_report_ord_idx ON observations (report_id, ord);
 CREATE TABLE IF NOT EXISTS photos (
   id text PRIMARY KEY,

@@ -254,11 +254,21 @@ export function makeRepo(db: Db): Repo {
 
     async applySynthesis(reportId, out: SynthesisOutput) {
       await db.transaction(async (tx) => {
-        await tx.update(reports).set({ summary: out.summary, updatedAt: new Date() }).where(eq(reports.id, reportId));
+        // Write both the live summary AND the immutable AI-draft snapshot. Edits change
+        // `summary`; `ai_summary` stays the original so we can measure how much was changed.
+        await tx
+          .update(reports)
+          .set({ summary: out.summary, aiSummary: out.summary, updatedAt: new Date() })
+          .where(eq(reports.id, reportId));
         for (const o of out.observations) {
           await tx
             .update(observations)
-            .set({ cleanedDescription: o.cleanedDescription, trade: o.trade ?? null, area: o.area ?? null })
+            .set({
+              cleanedDescription: o.cleanedDescription,
+              aiCleanedDescription: o.cleanedDescription,
+              trade: o.trade ?? null,
+              area: o.area ?? null,
+            })
             .where(and(eq(observations.id, o.id), eq(observations.reportId, reportId)));
         }
       });
@@ -298,6 +308,102 @@ export function makeRepo(db: Db): Repo {
       if (!exists) return null;
       await db.update(reports).set({ status: 'reviewed', updatedAt: new Date() }).where(eq(reports.id, id));
       return assembleReport(id);
+    },
+
+    async setLangsmithRunId(id, runId) {
+      await db.update(reports).set({ langsmithRunId: runId }).where(eq(reports.id, id));
+    },
+
+    async getReportQuality(id) {
+      const r = (
+        await db
+          .select({
+            id: reports.id,
+            runId: reports.langsmithRunId,
+            status: reports.status,
+            processing: reports.processing,
+            createdAt: reports.createdAt,
+            summary: reports.summary,
+            aiSummary: reports.aiSummary,
+          })
+          .from(reports)
+          .where(eq(reports.id, id))
+          .limit(1)
+      )[0];
+      if (!r) return null;
+      const obs = await db
+        .select({
+          id: observations.id,
+          cleanedDescription: observations.cleanedDescription,
+          aiCleanedDescription: observations.aiCleanedDescription,
+          transcriptConfidence: observations.transcriptConfidence,
+        })
+        .from(observations)
+        .where(eq(observations.reportId, id))
+        .orderBy(asc(observations.ord));
+      return {
+        id: r.id,
+        runId: r.runId ?? null,
+        status: r.status,
+        processing: r.processing,
+        createdAt: iso(r.createdAt),
+        summary: r.summary,
+        aiSummary: r.aiSummary ?? null,
+        observations: obs.map((o) => ({
+          id: o.id,
+          cleanedDescription: o.cleanedDescription ?? null,
+          aiCleanedDescription: o.aiCleanedDescription ?? null,
+          transcriptConfidence: o.transcriptConfidence ?? null,
+        })),
+      };
+    },
+
+    async listReportQuality() {
+      const rs = await db
+        .select({
+          id: reports.id,
+          runId: reports.langsmithRunId,
+          status: reports.status,
+          processing: reports.processing,
+          createdAt: reports.createdAt,
+          summary: reports.summary,
+          aiSummary: reports.aiSummary,
+        })
+        .from(reports)
+        .orderBy(desc(reports.createdAt));
+      if (!rs.length) return [];
+      const allObs = await db
+        .select({
+          reportId: observations.reportId,
+          id: observations.id,
+          ord: observations.ord,
+          cleanedDescription: observations.cleanedDescription,
+          aiCleanedDescription: observations.aiCleanedDescription,
+          transcriptConfidence: observations.transcriptConfidence,
+        })
+        .from(observations)
+        .orderBy(asc(observations.ord));
+      const byReport = new Map<string, typeof allObs>();
+      for (const o of allObs) {
+        const list = byReport.get(o.reportId) ?? [];
+        list.push(o);
+        byReport.set(o.reportId, list);
+      }
+      return rs.map((r) => ({
+        id: r.id,
+        runId: r.runId ?? null,
+        status: r.status,
+        processing: r.processing,
+        createdAt: iso(r.createdAt),
+        summary: r.summary,
+        aiSummary: r.aiSummary ?? null,
+        observations: (byReport.get(r.id) ?? []).map((o) => ({
+          id: o.id,
+          cleanedDescription: o.cleanedDescription ?? null,
+          aiCleanedDescription: o.aiCleanedDescription ?? null,
+          transcriptConfidence: o.transcriptConfidence ?? null,
+        })),
+      }));
     },
   };
 }
