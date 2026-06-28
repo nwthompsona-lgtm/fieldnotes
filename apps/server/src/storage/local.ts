@@ -3,7 +3,7 @@
  * `.ct` sidecar per object so content types round-trip. URLs point back at the server's
  * /media route (absolute, using publicBaseUrl).
  */
-import { mkdir, readFile, writeFile, access } from 'node:fs/promises';
+import { mkdir, readFile, writeFile, access, rm } from 'node:fs/promises';
 import { dirname, join, resolve, sep } from 'node:path';
 import type { AppConfig } from '../config.js';
 import type { PutOptions, StorageDriver, StorageObject } from './types.js';
@@ -53,6 +53,12 @@ export class LocalDiskDriver implements StorageDriver {
     } catch {
       return false;
     }
+  }
+
+  async delete(key: string): Promise<void> {
+    const p = this.pathFor(key);
+    await rm(p, { force: true }); // force => no error if missing
+    await rm(`${p}.ct`, { force: true });
   }
 
   async url(key: string): Promise<string> {

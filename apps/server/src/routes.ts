@@ -43,6 +43,27 @@ export function registerRoutes(app: FastifyInstance, deps: ServerDeps): void {
     };
   };
 
+  // Lazily (re)render the hosted HTML+PDF for a READY report and cache them. Edits delete
+  // these artifacts (see PATCH), so the next view re-renders fresh from current data —
+  // the draft watermark follows status (draft → watermark, reviewed → clean). Returns
+  // false when the report isn't ready yet, so the caller shows a processing page / 425.
+  const ensureArtifacts = async (id: string): Promise<boolean> => {
+    const htmlKey = storageKeys.html(id);
+    const pdfKey = storageKeys.pdf(id);
+    if ((await storage.exists(htmlKey)) && (await storage.exists(pdfKey))) return true;
+    const status = await repo.getReportStatus(id);
+    if (!status || status.processing !== 'ready') return false;
+    await renderAndStore(deps, id, status.status === 'reviewed');
+    return true;
+  };
+
+  // Drop the cached html/pdf so the next /r/:id(.pdf) view re-renders from current data.
+  const invalidateArtifacts = (id: string): Promise<void> =>
+    Promise.all([
+      storage.delete(storageKeys.html(id)).catch(() => {}),
+      storage.delete(storageKeys.pdf(id)).catch(() => {}),
+    ]).then(() => {});
+
   app.get('/healthz', async () => ({
     ok: true,
     storage: storage.name,
@@ -113,6 +134,7 @@ export function registerRoutes(app: FastifyInstance, deps: ServerDeps): void {
     }
     const r = await repo.applyEdit(req.params.id, parsed.data);
     if (!r) return reply.code(404).send({ error: 'not found or not editable' });
+    let result = r;
 
     // The summary is derived from the narrations. When the super corrects an observation's
     // description (and isn't hand-editing the summary itself), regenerate the summary so it
@@ -138,12 +160,16 @@ export function registerRoutes(app: FastifyInstance, deps: ServerDeps): void {
           })),
         });
         const r2 = await repo.applyEdit(r.id, { summary });
-        if (r2) return resolveReport(r2);
+        if (r2) result = r2;
       } catch (err) {
         app.log.error({ err, reportId: r.id }, 'summary regeneration failed');
       }
     }
-    return resolveReport(r);
+    // The edit (and any resummary) changed the report — drop the stale hosted html/pdf so
+    // the next view re-renders fresh (1.1). The edit also reverted status to draft in the
+    // repo, so that re-render will show the draft watermark until it's finalized again.
+    await invalidateArtifacts(req.params.id);
+    return resolveReport(result);
   });
 
   // Finalize: re-render the reviewed version, flip status -> reviewed.
@@ -165,23 +191,22 @@ export function registerRoutes(app: FastifyInstance, deps: ServerDeps): void {
 
   // ── Hosted artifacts (PM-facing) ───────────────────────────────────────────
   app.get<{ Params: { id: string } }>('/r/:id', async (req, reply) => {
-    const key = storageKeys.html(req.params.id);
-    if (!(await storage.exists(key))) {
+    if (!(await ensureArtifacts(req.params.id))) {
       reply.type('text/html');
       return processingPage(req.params.id, base);
     }
-    const obj = await storage.get(key);
-    reply.type('text/html; charset=utf-8');
+    const obj = await storage.get(storageKeys.html(req.params.id));
+    reply.type('text/html; charset=utf-8').header('cache-control', 'no-cache');
     return reply.send(Buffer.from(obj.bytes));
   });
 
   app.get<{ Params: { id: string } }>('/r/:id.pdf', async (req, reply) => {
-    const key = storageKeys.pdf(req.params.id);
-    if (!(await storage.exists(key))) return reply.code(425).send({ error: 'not ready' });
-    const obj = await storage.get(key);
+    if (!(await ensureArtifacts(req.params.id))) return reply.code(425).send({ error: 'not ready' });
+    const obj = await storage.get(storageKeys.pdf(req.params.id));
     reply
       .type('application/pdf')
-      .header('content-disposition', `inline; filename="field-report-${req.params.id}.pdf"`);
+      .header('content-disposition', `inline; filename="field-report-${req.params.id}.pdf"`)
+      .header('cache-control', 'no-cache');
     return reply.send(Buffer.from(obj.bytes));
   });
 

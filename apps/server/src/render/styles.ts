@@ -64,10 +64,13 @@ html,body{margin:0;padding:0;background:var(--page-bg);color:var(--ink);
 .draft-banner{background:#fdf0d8;border:1px solid #efd9a8;color:#7a4d05;font-size:12px;font-weight:600;
   border-radius:9px;padding:8px 12px;margin-bottom:18px;text-align:center;}
 
-@page{size:Letter;margin:0;}
+@page{size:Letter;}
 @media print{
   html,body{background:#fff;}
+  /* Page margins are applied by the PDF renderer on EVERY page (pdf.ts margin option);
+     zero the on-screen container padding so the inset isn't doubled in print. */
   .page{max-width:none;margin:0;box-shadow:none;}
+  .wrap{padding:0;}
   .obs{break-inside:avoid;page-break-inside:avoid;}
 }
 `;

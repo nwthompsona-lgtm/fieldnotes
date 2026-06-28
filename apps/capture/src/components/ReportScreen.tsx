@@ -74,12 +74,44 @@ export function ReportScreen({ reportId, online, onBack }: Props) {
     }
   }
 
+  // Finalize = the superintendent's sign-off: re-renders the clean (non-draft) report and
+  // marks it reviewed. Editing re-opens it to draft (server-side), so we only finalize when
+  // there are unsaved review changes; an already-reviewed report's artifacts are final.
+  async function ensureFinalized(): Promise<Report> {
+    if (report && report.status === 'reviewed') return report;
+    const updated = await finalizeReport(reportId);
+    setReport(updated);
+    return updated;
+  }
+
+  // Export = finalize, so the PDF is never a watermarked draft (decision 1.5).
+  async function exportPdf() {
+    setError(null);
+    if (report && report.status === 'reviewed') {
+      window.open(pdfUrl(reportId), '_blank', 'noopener'); // already final — open directly
+      return;
+    }
+    // Open the tab now (within the user gesture) so it isn't popup-blocked, then point it
+    // at the freshly finalized PDF once rendering completes.
+    const win = window.open('', '_blank');
+    setFinalizing(true);
+    try {
+      await ensureFinalized();
+      if (win) win.location.href = pdfUrl(reportId);
+      else window.open(pdfUrl(reportId), '_blank', 'noopener');
+    } catch (e) {
+      win?.close();
+      setError((e as Error).message);
+    } finally {
+      setFinalizing(false);
+    }
+  }
+
   async function send() {
     setFinalizing(true);
     setError(null);
     try {
-      const updated = await finalizeReport(reportId);
-      setReport(updated);
+      const updated = await ensureFinalized();
       setSent(true);
       const url = hostedUrl(reportId);
       const title = `Field report — ${updated.projectName ?? updated.projectId}`;
@@ -304,10 +336,11 @@ export function ReportScreen({ reportId, online, onBack }: Props) {
         <button
           className="btn btn-soft"
           style={{ flex: 1, width: 'auto', minHeight: 56, fontSize: 15 }}
-          onClick={() => window.open(pdfUrl(reportId), '_blank', 'noopener')}
+          disabled={finalizing}
+          onClick={exportPdf}
         >
-          <Icon name="upload" size={18} />
-          PDF
+          <Icon name="doc" size={18} />
+          Export PDF
         </button>
         <button
           className="btn btn-primary"

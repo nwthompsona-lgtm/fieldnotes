@@ -23,11 +23,13 @@ export async function renderReportPdf(html: string): Promise<Uint8Array> {
   try {
     // Images are data: URLs, so this resolves without any network.
     await page.setContent(html, { waitUntil: 'networkidle' });
+    // Margins are set here (not via @page) so Chromium applies them uniformly to EVERY
+    // page, including interior page breaks in multi-page reports. The CSS zeroes the
+    // container padding in print so the inset isn't doubled.
     const pdf = await page.pdf({
       format: 'Letter',
       printBackground: true,
-      preferCSSPageSize: true,
-      margin: { top: '0', right: '0', bottom: '0', left: '0' },
+      margin: { top: '0.6in', bottom: '0.5in', left: '0.7in', right: '0.7in' },
     });
     return new Uint8Array(pdf);
   } finally {

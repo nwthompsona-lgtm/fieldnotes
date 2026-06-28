@@ -8,6 +8,7 @@ import {
   PutObjectCommand,
   GetObjectCommand,
   HeadObjectCommand,
+  DeleteObjectCommand,
 } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import type { AppConfig } from '../config.js';
@@ -74,6 +75,11 @@ export class S3Driver implements StorageDriver {
     } catch {
       return false;
     }
+  }
+
+  async delete(key: string): Promise<void> {
+    // S3/R2 DeleteObject is idempotent — succeeds even if the key is absent.
+    await this.client.send(new DeleteObjectCommand({ Bucket: this.bucket, Key: key }));
   }
 
   async url(key: string): Promise<string> {

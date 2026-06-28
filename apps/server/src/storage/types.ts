@@ -20,6 +20,9 @@ export interface StorageDriver {
   put(key: string, bytes: Uint8Array, opts: PutOptions): Promise<string>;
   get(key: string): Promise<StorageObject>;
   exists(key: string): Promise<boolean>;
+  /** Remove an object. Idempotent — a no-op if the key doesn't exist. Used to
+   *  invalidate cached render artifacts (html/pdf) when a report is edited. */
+  delete(key: string): Promise<void>;
   /** A URL the app can serve/redirect to. For local driver this is `/media/:key`
    *  (served by the server); for S3/R2 it may be a signed URL. */
   url(key: string): Promise<string>;

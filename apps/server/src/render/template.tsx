@@ -116,7 +116,11 @@ export function ReportDocument({ model }: { model: ReportRenderModel }) {
         ))}
 
         <footer className="report-footer">
-          <span className="badge">AI-assisted, superintendent-reviewed.</span>
+          <span className="badge">
+            {model.reviewed
+              ? 'AI-assisted, superintendent-reviewed.'
+              : 'AI-assisted draft — pending superintendent review.'}
+          </span>
           <span>{model.projectName} · {prettyDate(model.date)}</span>
         </footer>
       </div>
