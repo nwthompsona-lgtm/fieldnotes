@@ -40,6 +40,10 @@ export class VoiceRecorder {
   private stream: MediaStream | null = null;
   private chunks: BlobPart[] = [];
   private mime = '';
+  // Live level metering (best-effort) so the UI waveform reflects real audio.
+  private audioCtx: AudioContext | null = null;
+  private analyser: AnalyserNode | null = null;
+  private freq: Uint8Array<ArrayBuffer> | null = null;
 
   /** Acquire mic + construct the recorder. Throws a friendly error on denial. */
   async init(): Promise<void> {
@@ -72,13 +76,52 @@ export class VoiceRecorder {
     this.recorder.addEventListener('dataavailable', (e) => {
       if (e.data && e.data.size > 0) this.chunks.push(e.data);
     });
+
+    // Tap the same mic stream with a Web Audio analyser so the UI can show REAL levels
+    // (proof to the user that audio is being captured). Purely for visualization — if it
+    // fails, recording is unaffected and the UI falls back to a synthetic animation.
+    try {
+      const Ctx =
+        window.AudioContext ??
+        (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+      if (Ctx && this.stream) {
+        this.audioCtx = new Ctx();
+        const src = this.audioCtx.createMediaStreamSource(this.stream);
+        this.analyser = this.audioCtx.createAnalyser();
+        this.analyser.fftSize = 64;
+        this.analyser.smoothingTimeConstant = 0.7;
+        src.connect(this.analyser);
+        this.freq = new Uint8Array(this.analyser.frequencyBinCount);
+      }
+    } catch {
+      /* level metering is best-effort */
+    }
   }
 
   start(): void {
     if (!this.recorder) throw new Error('Recorder not initialized.');
+    // Resume the audio context (it can start suspended until a user gesture).
+    this.audioCtx?.resume().catch(() => {});
     // Timeslice so we periodically flush chunks — protects against an abrupt
     // stop (backgrounding) losing the whole take.
     this.recorder.start(1000);
+  }
+
+  /** Current normalized levels (0..1) across `count` bars from the live mic spectrum.
+   *  Returns [] when metering is unavailable so the caller can fall back. */
+  getLevels(count: number): number[] {
+    const a = this.analyser;
+    const f = this.freq;
+    if (!a || !f) return [];
+    a.getByteFrequencyData(f);
+    const usable = Math.max(1, Math.floor(f.length * 0.8)); // top bins are mostly empty
+    const out: number[] = [];
+    for (let i = 0; i < count; i++) {
+      const idx = Math.floor((i / count) * usable);
+      // Gentle gamma so ordinary speech is clearly visible, not just loud peaks.
+      out.push(Math.pow((f[idx] ?? 0) / 255, 0.7));
+    }
+    return out;
   }
 
   get isActive(): boolean {
@@ -128,6 +171,10 @@ export class VoiceRecorder {
 
   private teardown(): void {
     this.stream?.getTracks().forEach((t) => t.stop());
+    this.audioCtx?.close().catch(() => {});
+    this.audioCtx = null;
+    this.analyser = null;
+    this.freq = null;
     this.stream = null;
     this.recorder = null;
     this.chunks = [];

@@ -3,7 +3,7 @@ import { Icon } from './Icon';
 import { PhotoThumb } from './PhotoThumb';
 import { db } from '../db';
 import { getObservationsForWalk, getWalk, setWalkDetails } from '../repo';
-import { syncWalk, type SyncProgress } from '../sync';
+import { syncWalk } from '../sync';
 import { recordSubmittedReport } from '../lib/reports';
 import {
   getPreparerName,
@@ -14,9 +14,40 @@ import {
 } from '../lib/profile';
 import { formatBytes, formatLongDate } from '../lib/format';
 import { walkByteSize } from '../repo';
+import { getReportStatus } from '../lib/api';
 
 // The OLD build baked this placeholder; treat it as "unset" so the user is asked.
 const STALE_NAME = 'Pilot Super';
+
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+// Maps server processing status -> overall fraction for the second half of the bar,
+// so progress keeps advancing through transcribe/synthesize/render, not just the upload.
+const PROC_FRAC: Record<string, number> = {
+  uploaded: 0.05,
+  transcribing: 0.35,
+  synthesizing: 0.7,
+  rendering: 0.92,
+  ready: 1,
+  failed: 1,
+};
+
+/** Poll the report until it's ready/failed, reporting fraction (0..1). Returns whether
+ *  it reached "ready". Times out after ~2min (report keeps processing server-side). */
+async function pollProcessing(id: string, onFrac: (f: number) => void): Promise<boolean> {
+  for (let i = 0; i < 60; i++) {
+    try {
+      const s = await getReportStatus(id);
+      onFrac(PROC_FRAC[s.processing] ?? 0.5);
+      if (s.processing === 'ready') return true;
+      if (s.processing === 'failed') return false;
+    } catch {
+      // transient (offline blip) — keep polling
+    }
+    await sleep(2000);
+  }
+  return false;
+}
 
 interface Props {
   pendingWalkId: string;
@@ -40,9 +71,12 @@ export function ReviewScreen({ pendingWalkId, online, onBack, onOpenReport, onNe
   const [hydrated, setHydrated] = useState(false);
 
   const [running, setRunning] = useState(false);
-  const [progress, setProgress] = useState<SyncProgress | null>(null);
+  const [pct, setPct] = useState(0);
+  const [phaseLabel, setPhaseLabel] = useState('Uploading…');
   const [done, setDone] = useState(false);
+  const [reportReady, setReportReady] = useState(false);
   const [reportId, setReportId] = useState<string | null>(null);
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
   const listId = useId();
 
@@ -88,20 +122,29 @@ export function ReviewScreen({ pendingWalkId, online, onBack, onOpenReport, onNe
   }, [name, project, hydrated, pendingWalkId]);
 
   const detailsReady = name.trim().length > 0 && project.trim().length > 0;
-  const pct = Math.round((progress?.fraction ?? 0) * 100);
-  const isError = progress?.phase === 'error';
 
   async function runSync() {
     if (!detailsReady || !online) return;
+    setErrorMsg(null);
     setRunning(true);
-    setProgress({ totalObservations: count, fraction: 0, phase: 'building' });
+    setPhaseLabel('Uploading…');
+    setPct(0);
     try {
-      const result = await syncWalk(pendingWalkId, setProgress);
+      // Upload occupies the first half of the bar (real bytes via XHR progress).
+      const result = await syncWalk(pendingWalkId, (p) => {
+        if (p.phase === 'uploading') setPct(Math.round((p.fraction ?? 0) * 50));
+      });
       recordSubmittedReport(result.reportId, count);
       setReportId(result.reportId);
+      setPct(50);
+      // Second half: the server writes the report (transcribe → synthesize → render).
+      setPhaseLabel('Writing the report…');
+      const ready = await pollProcessing(result.reportId, (f) => setPct(50 + Math.round(f * 50)));
+      setPct(100);
+      setReportReady(ready);
       setDone(true);
-    } catch {
-      // surfaced via progress.phase === 'error'
+    } catch (e) {
+      setErrorMsg((e as Error).message || 'Upload failed. Check your connection and retry.');
     } finally {
       setRunning(false);
     }
@@ -251,9 +294,9 @@ export function ReviewScreen({ pendingWalkId, online, onBack, onOpenReport, onNe
               Uploads over Wi-Fi or cell with a live progress bar. Transcription and the draft start
               automatically.
             </div>
-            {isError && progress?.message && (
+            {errorMsg && (
               <p className="err" style={{ marginBottom: 0 }}>
-                Upload failed: {progress.message}
+                {errorMsg}
               </p>
             )}
             {!detailsReady && (
@@ -268,7 +311,7 @@ export function ReviewScreen({ pendingWalkId, online, onBack, onOpenReport, onNe
               onClick={runSync}
             >
               <Icon name="cloud" size={22} />
-              {isError ? 'Retry sync' : 'Sync now'}
+              {errorMsg ? 'Retry sync' : 'Sync now'}
             </button>
           </div>
         )}
@@ -276,7 +319,7 @@ export function ReviewScreen({ pendingWalkId, online, onBack, onOpenReport, onNe
         {running && (
           <div className="card">
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
-              <span style={{ fontWeight: 700, fontSize: 16 }}>Uploading…</span>
+              <span style={{ fontWeight: 700, fontSize: 16 }}>{phaseLabel}</span>
               <span
                 className="display tabular"
                 style={{ fontWeight: 700, fontSize: 16, color: 'var(--primary)' }}
@@ -289,7 +332,9 @@ export function ReviewScreen({ pendingWalkId, online, onBack, onOpenReport, onNe
               <div className="sheen" />
             </div>
             <div className="muted" style={{ fontSize: 13, marginTop: 10 }}>
-              {progress?.message ?? 'Keep the app open while it uploads.'}
+              {phaseLabel === 'Uploading…'
+                ? 'Keep the app open while it uploads.'
+                : 'Transcribing and drafting your report…'}
             </div>
           </div>
         )}
@@ -313,10 +358,12 @@ export function ReviewScreen({ pendingWalkId, online, onBack, onOpenReport, onNe
               <Icon name="check" size={34} strokeWidth={2.4} />
             </div>
             <div className="display" style={{ fontWeight: 700, fontSize: 19, marginTop: 12 }}>
-              Uploaded
+              {reportReady ? 'Report ready' : 'Uploaded'}
             </div>
             <div className="muted" style={{ fontSize: 13.5, marginTop: 4, lineHeight: 1.45 }}>
-              Your report is being written up — transcribing and drafting takes about a minute.
+              {reportReady
+                ? 'Your report is ready — review the draft and send it.'
+                : 'Your report is being written up — this can take a minute.'}
             </div>
             {reportId && (
               <button

@@ -109,6 +109,36 @@ export function registerRoutes(app: FastifyInstance, deps: ServerDeps): void {
     }
     const r = await repo.applyEdit(req.params.id, parsed.data);
     if (!r) return reply.code(404).send({ error: 'not found or not editable' });
+
+    // The summary is derived from the narrations. When the super corrects an observation's
+    // description (and isn't hand-editing the summary itself), regenerate the summary so it
+    // reflects the change. Best-effort: a failure here must not fail the edit.
+    const descChanged = parsed.data.observations?.some((o) => o.cleanedDescription !== undefined);
+    if (descChanged && parsed.data.summary === undefined) {
+      try {
+        const projectId = await repo.getReportProjectId(r.id);
+        const project = projectId ? await repo.getProject(projectId) : null;
+        const summary = await deps.synthesizer.resummarize({
+          project: {
+            name: project?.name ?? 'Project',
+            superName: r.superName,
+            date: r.date,
+            glossary: project?.glossary ?? [],
+          },
+          observations: r.observations.map((o) => ({
+            id: o.id,
+            order: o.order,
+            cleanedDescription: o.cleanedDescription ?? '',
+            trade: o.trade,
+            area: o.area,
+          })),
+        });
+        const r2 = await repo.applyEdit(r.id, { summary });
+        if (r2) return resolveReport(r2);
+      } catch (err) {
+        app.log.error({ err, reportId: r.id }, 'summary regeneration failed');
+      }
+    }
     return resolveReport(r);
   });
 

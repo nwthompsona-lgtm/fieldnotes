@@ -201,14 +201,23 @@ function ReadyView({ report: initial, reportId }: { report: Report; reportId: st
   const save = useCallback(
     async (edit: ReportEdit) => {
       const updated = await patchReport(reportId, edit);
-      // Editing reverts status to draft server-side; reflect status + links only.
-      setReport((r) => ({
-        ...r,
-        status: updated.status,
-        processing: updated.processing,
-        htmlUrl: updated.htmlUrl,
-        pdfUrl: updated.pdfUrl,
-      }));
+      // Editing reverts status to draft server-side; reflect status + links only — never
+      // clobber text the super is actively typing. EXCEPTION: when this save edited a
+      // description (not the summary), the server regenerates the summary; reflect it,
+      // unless the user is currently in the summary box.
+      setReport((r) => {
+        const next: Report = {
+          ...r,
+          status: updated.status,
+          processing: updated.processing,
+          htmlUrl: updated.htmlUrl,
+          pdfUrl: updated.pdfUrl,
+        };
+        const editingSummaryBox =
+          typeof document !== 'undefined' && document.activeElement?.id === 'summary';
+        if (edit.summary === undefined && !editingSummaryBox) next.summary = updated.summary;
+        return next;
+      });
     },
     [reportId],
   );

@@ -10,8 +10,19 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { traceable } from 'langsmith/traceable';
 import type { AppConfig } from '../config.js';
-import { SYSTEM_PROMPT, SYNTHESIS_PROMPT_VERSION, buildUserMessage } from './prompt.js';
-import { SynthesisOutput, type SynthesisInput, type Synthesizer } from './types.js';
+import {
+  SYSTEM_PROMPT,
+  SYNTHESIS_PROMPT_VERSION,
+  SUMMARY_SYSTEM_PROMPT,
+  buildUserMessage,
+  buildSummaryMessage,
+} from './prompt.js';
+import {
+  SynthesisOutput,
+  type SynthesisInput,
+  type SummaryInput,
+  type Synthesizer,
+} from './types.js';
 
 function extractJson(text: string): unknown {
   let t = text.trim();
@@ -29,6 +40,7 @@ export class ClaudeSynthesizer implements Synthesizer {
   private model: string;
   private maxTokens: number;
   private run: (input: SynthesisInput) => Promise<SynthesisOutput>;
+  private runSummary: (input: SummaryInput) => Promise<string>;
 
   constructor(cfg: AppConfig) {
     if (!cfg.synthesis.anthropicApiKey) throw new Error('ANTHROPIC_API_KEY required for claude');
@@ -37,6 +49,7 @@ export class ClaudeSynthesizer implements Synthesizer {
     this.model = cfg.synthesis.model;
     this.maxTokens = cfg.synthesis.maxTokens;
     const core = (input: SynthesisInput) => this.execute(input);
+    const summaryCore = (input: SummaryInput) => this.executeSummary(input);
     this.run = cfg.langsmith.enabled
       ? (traceable(core, {
           name: 'fieldreport.synthesize',
@@ -44,10 +57,39 @@ export class ClaudeSynthesizer implements Synthesizer {
           metadata: { promptVersion: SYNTHESIS_PROMPT_VERSION, model: this.model },
         }) as typeof core)
       : core;
+    this.runSummary = cfg.langsmith.enabled
+      ? (traceable(summaryCore, {
+          name: 'fieldreport.resummarize',
+          project_name: cfg.langsmith.project,
+          metadata: { model: this.model },
+        }) as typeof summaryCore)
+      : summaryCore;
   }
 
   synthesize(input: SynthesisInput): Promise<SynthesisOutput> {
     return this.run(input);
+  }
+
+  resummarize(input: SummaryInput): Promise<string> {
+    return this.runSummary(input);
+  }
+
+  private async executeSummary(input: SummaryInput): Promise<string> {
+    const stream = this.client.messages.stream({
+      model: this.model,
+      max_tokens: 600,
+      system: SUMMARY_SYSTEM_PROMPT,
+      messages: [{ role: 'user', content: buildSummaryMessage(input) }],
+    });
+    const res = await stream.finalMessage();
+    if ((res.stop_reason as string) === 'refusal') {
+      throw new Error('summary refused by safety classifier');
+    }
+    return res.content
+      .filter((b): b is Anthropic.TextBlock => b.type === 'text')
+      .map((b) => b.text)
+      .join('\n')
+      .trim();
   }
 
   private async callModel(userMessage: string): Promise<string> {

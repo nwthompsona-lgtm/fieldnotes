@@ -4,7 +4,7 @@
  * and writes a factual summary. It deliberately does NOT upgrade tentative work to
  * complete (the prepped-vs-poured fidelity rule) — it only tidies, never re-asserts.
  */
-import type { SynthesisInput, SynthesisOutput, Synthesizer } from './types.js';
+import type { SynthesisInput, SummaryInput, SynthesisOutput, Synthesizer } from './types.js';
 
 const TRADE_RULES: Array<[RegExp, string]> = [
   [/\b(drywall|gypsum|taping|mudding|skim)\b/i, 'Drywall'],
@@ -91,5 +91,27 @@ export class MockSynthesizer implements Synthesizer {
       );
     }
     return { summary: summaryParts.join(' '), observations };
+  }
+
+  /** Regenerate the summary from the (edited) polished descriptions — deterministic. */
+  async resummarize(input: SummaryInput): Promise<string> {
+    const obs = [...input.observations].sort((a, b) => a.order - b.order);
+    const n = obs.length;
+    const text = obs.map((o) => o.cleanedDescription ?? '').join(' ');
+    const safety = /\b(guardrail|fall hazard|hazard|no rail|unprotected|deficien)\b/i.test(text);
+    const areas = [...new Set(obs.map((o) => o.area).filter(Boolean))] as string[];
+    const where = areas.length
+      ? ` across ${areas.slice(0, 3).join(', ')}${areas.length > 3 ? ', and other areas' : ''}`
+      : ' across active areas';
+    const parts = [
+      `Site walk of ${input.project.name} on ${input.project.date}, covering ${n} observation${n === 1 ? '' : 's'}${where}.`,
+      'Work is progressing across multiple trades; details for each observation follow below.',
+    ];
+    if (safety) {
+      parts.push(
+        'A deficiency requiring attention was noted during the walk and flagged to the responsible foreman.',
+      );
+    }
+    return parts.join(' ');
   }
 }

@@ -16,7 +16,7 @@
  *    that were never spoken. The model knows generic construction; it must NOT guess
  *    specifics. Photo count is context, not a fact to describe.
  */
-import type { SynthesisInput } from './types.js';
+import type { SynthesisInput, SummaryInput } from './types.js';
 
 export const SYNTHESIS_PROMPT_VERSION = 'synthesis-v1';
 
@@ -94,4 +94,38 @@ OBSERVATIONS (verbatim, in walk order):
 ${lines}
 
 Produce the JSON report now.`;
+}
+
+// ── Summary-only regeneration (when a super edits an observation during review) ──────
+
+export const SUMMARY_SYSTEM_PROMPT = `You write the one-paragraph daily summary at the top of a construction field report. You are given the already-polished, superintendent-reviewed observation write-ups for one site walk; write a fresh summary that reflects them.
+
+FIDELITY RULES (override everything):
+• Summarize ONLY what the observations state. Never add facts, quantities, dates, or names not present.
+• Preserve stage and tentativeness — do not promote in-progress or planned work to completed.
+• Keep safety issues, deficiencies, delays, RFIs/submittals, and coordination conflicts prominent.
+
+STYLE: 2–4 sentences, professional and neutral — a project manager should trust it at a glance. No preamble, no first person, no "the superintendent said." If there is essentially nothing to summarize, say so plainly.
+
+OUTPUT: Return ONLY the summary text — no JSON, no markdown, no labels.`;
+
+/** Build the summary-only user message from the current (edited) descriptions. */
+export function buildSummaryMessage(input: SummaryInput): string {
+  const lines = input.observations
+    .slice()
+    .sort((a, b) => a.order - b.order)
+    .map((o) => {
+      const tag = [o.trade, o.area].filter(Boolean).join(' · ');
+      const head = tag ? `#${o.order} (${tag})` : `#${o.order}`;
+      return `${head}: ${o.cleanedDescription?.trim() || '(no description)'}`;
+    })
+    .join('\n');
+
+  return `PROJECT: ${input.project.name}
+DATE: ${input.project.date}
+
+OBSERVATIONS (polished, in walk order):
+${lines}
+
+Write the daily summary now.`;
 }

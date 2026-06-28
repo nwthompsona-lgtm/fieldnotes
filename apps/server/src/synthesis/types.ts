@@ -27,6 +27,20 @@ export interface SynthesisInput {
   observations: SynthesisObservationInput[];
 }
 
+/** Input for regenerating ONLY the daily summary from the (possibly edited) polished
+ *  observation descriptions — used when a super corrects a narration during review. */
+export interface SummaryObservationInput {
+  id: string;
+  order: number;
+  cleanedDescription: string;
+  trade?: string;
+  area?: string;
+}
+export interface SummaryInput {
+  project: SynthesisProjectContext;
+  observations: SummaryObservationInput[];
+}
+
 /** Strict output shape the model must return (also used to validate its JSON). */
 export const SynthesisObservationOutput = z.object({
   id: z.string(),
@@ -45,4 +59,6 @@ export type SynthesisOutput = z.infer<typeof SynthesisOutput>;
 export interface Synthesizer {
   readonly name: string;
   synthesize(input: SynthesisInput): Promise<SynthesisOutput>;
+  /** Regenerate just the daily summary from current observation descriptions. */
+  resummarize(input: SummaryInput): Promise<string>;
 }

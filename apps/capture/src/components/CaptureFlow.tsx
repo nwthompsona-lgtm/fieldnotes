@@ -25,6 +25,7 @@ type Step = 'photos' | 'voice';
 
 // Static waveform heights for the saved-note playback chip (illustrative).
 const STATIC_WAVE = [7, 12, 20, 28, 18, 10, 14, 24, 30, 22, 12, 8, 16, 26, 32, 20, 11, 15, 23, 29, 19, 9, 13, 21, 17, 10];
+const BAR_COUNT = 26; // live record-meter bars
 
 /**
  * One observation at a time (spec §3): take photo(s) -> record one voice note -> save.
@@ -46,15 +47,67 @@ export function CaptureFlow({ walkId, onSaved, onCancel }: Props) {
   const [recDuration, setRecDuration] = useState(0);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
+  // Live record meter (real mic levels) + playback of the saved note.
+  const rafRef = useRef<number | null>(null);
+  const barRefs = useRef<(HTMLDivElement | null)[]>([]);
+  const [audioUrl, setAudioUrl] = useState<string | null>(null);
+  const audioElRef = useRef<HTMLAudioElement | null>(null);
+  const [playing, setPlaying] = useState(false);
+
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
-  useEffect(() => () => clearTimer(), []);
+  useEffect(
+    () => () => {
+      clearTimer();
+      stopMeter();
+    },
+    [],
+  );
+
+  // Revoke the previous playback URL when it changes or on unmount.
+  useEffect(() => {
+    if (!audioUrl) return;
+    return () => URL.revokeObjectURL(audioUrl);
+  }, [audioUrl]);
 
   function clearTimer() {
     if (timerRef.current) {
       clearInterval(timerRef.current);
       timerRef.current = null;
     }
+  }
+
+  function stopMeter() {
+    if (rafRef.current != null) {
+      cancelAnimationFrame(rafRef.current);
+      rafRef.current = null;
+    }
+  }
+
+  /** Drive the record-waveform bars from real mic levels (falls back to a synthetic
+   *  wiggle if the analyser is unavailable). Uses direct DOM writes to avoid 60fps React. */
+  function startMeter() {
+    stopMeter();
+    const loop = (t: number) => {
+      const levels = recorderRef.current?.getLevels(BAR_COUNT) ?? [];
+      for (let i = 0; i < BAR_COUNT; i++) {
+        const el = barRefs.current[i];
+        if (!el) continue;
+        const v = levels.length
+          ? levels[i] ?? 0
+          : 0.25 + 0.3 * Math.abs(Math.sin(t / 200 + i * 0.5));
+        el.style.transform = `scaleY(${Math.max(0.08, Math.min(1, v))})`;
+      }
+      rafRef.current = requestAnimationFrame(loop);
+    };
+    rafRef.current = requestAnimationFrame(loop);
+  }
+
+  function togglePlay() {
+    const el = audioElRef.current;
+    if (!el) return;
+    if (el.paused) el.play().catch(() => {});
+    else el.pause();
   }
 
   async function ensureObservation(): Promise<string> {
@@ -96,6 +149,7 @@ export function CaptureFlow({ walkId, onSaved, onCancel }: Props) {
       setRecSeconds(0);
       clearTimer();
       timerRef.current = setInterval(() => setRecSeconds((s) => s + 1), 1000);
+      startMeter();
     } catch (err) {
       setError((err as Error).message);
     }
@@ -106,6 +160,7 @@ export function CaptureFlow({ walkId, onSaved, onCancel }: Props) {
     if (!rec) return;
     setBusy(true);
     clearTimer();
+    stopMeter();
     setRecDuration(recSeconds);
     try {
       const { blob, mime } = await rec.stop();
@@ -116,6 +171,7 @@ export function CaptureFlow({ walkId, onSaved, onCancel }: Props) {
       const persisted = await getAudioForObs(id);
       if (!persisted) throw new Error('Voice note failed to save. Please re-record.');
       setHasAudio(true);
+      setAudioUrl(URL.createObjectURL(blob)); // enable playback of what was just recorded
     } catch (err) {
       setHasAudio(false);
       setError((err as Error).message);
@@ -129,6 +185,9 @@ export function CaptureFlow({ walkId, onSaved, onCancel }: Props) {
   async function reTakeVoice() {
     // Drop the previous take up front so a cancelled/failed re-record can't leave a
     // stale note behind that would later upload.
+    audioElRef.current?.pause();
+    setPlaying(false);
+    setAudioUrl(null);
     setHasAudio(false);
     setRecSeconds(0);
     if (obsId) await deleteAudio(obsId);
@@ -149,6 +208,8 @@ export function CaptureFlow({ walkId, onSaved, onCancel }: Props) {
 
   async function handleCancel() {
     clearTimer();
+    stopMeter();
+    audioElRef.current?.pause();
     if (recorderRef.current) recorderRef.current.cancel();
     if (obsId) await deleteObservation(obsId);
     onCancel();
@@ -463,18 +524,20 @@ export function CaptureFlow({ walkId, onSaved, onCancel }: Props) {
                       maxWidth: 260,
                     }}
                   >
-                    {Array.from({ length: 26 }, (_, i) => (
+                    {Array.from({ length: BAR_COUNT }, (_, i) => (
                       <div
                         key={i}
+                        ref={(el) => {
+                          barRefs.current[i] = el;
+                        }}
                         style={{
                           flex: 1,
                           height: '100%',
                           borderRadius: 3,
                           background: 'currentColor',
                           transformOrigin: 'center',
-                          transform: 'scaleY(.28)',
-                          animation: 'wavebar .9s ease-in-out infinite',
-                          animationDelay: `${(i * 0.045).toFixed(3)}s`,
+                          transform: 'scaleY(0.08)',
+                          transition: 'transform 80ms linear',
                         }}
                       />
                     ))}
@@ -514,7 +577,19 @@ export function CaptureFlow({ walkId, onSaved, onCancel }: Props) {
                       padding: '12px 14px',
                     }}
                   >
-                    <span
+                    {audioUrl && (
+                      <audio
+                        ref={audioElRef}
+                        src={audioUrl}
+                        onPlay={() => setPlaying(true)}
+                        onPause={() => setPlaying(false)}
+                        onEnded={() => setPlaying(false)}
+                        style={{ display: 'none' }}
+                      />
+                    )}
+                    <button
+                      onClick={togglePlay}
+                      aria-label={playing ? 'Pause' : 'Play'}
                       style={{
                         display: 'flex',
                         width: 38,
@@ -525,10 +600,12 @@ export function CaptureFlow({ walkId, onSaved, onCancel }: Props) {
                         alignItems: 'center',
                         justifyContent: 'center',
                         flex: '0 0 auto',
+                        border: 'none',
+                        cursor: 'pointer',
                       }}
                     >
-                      <Icon name="play" size={16} />
-                    </span>
+                      <Icon name={playing ? 'pause' : 'play'} size={16} />
+                    </button>
                     <div
                       style={{
                         flex: 1,

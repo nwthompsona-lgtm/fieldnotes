@@ -21,11 +21,12 @@ export type IconName =
   | 'doc'
   | 'alert'
   | 'play'
+  | 'pause'
   | 'drive'
   | 'edit'
   | 'home';
 
-const FILLED = new Set<IconName>(['sparkle', 'moon', 'play']);
+const FILLED = new Set<IconName>(['sparkle', 'moon', 'play', 'pause']);
 
 const PATHS: Record<IconName, JSX.Element> = {
   camera: (
@@ -80,6 +81,12 @@ const PATHS: Record<IconName, JSX.Element> = {
     </>
   ),
   play: <path d="M8 5l11 7-11 7Z" />,
+  pause: (
+    <>
+      <rect x="6" y="5" width="4" height="14" rx="1" />
+      <rect x="14" y="5" width="4" height="14" rx="1" />
+    </>
+  ),
   drive: (
     <>
       <path d="M5 13a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2" />
