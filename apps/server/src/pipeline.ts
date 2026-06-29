@@ -7,7 +7,7 @@ import { traceable, getCurrentRunTree } from 'langsmith/traceable';
 import type { ServerDeps } from './deps.js';
 import type { SynthesisInput } from './synthesis/types.js';
 import { assembleKeyterms } from './stt/index.js';
-import { renderReportHtml, renderReportPdf } from './render/index.js';
+import { renderReportHtml, renderReportPdf, buildPdfFooter } from './render/index.js';
 import { buildRenderModel } from './render-model.js';
 import { storageKeys } from './storage/types.js';
 import { recordRunFeedback } from './observability.js';
@@ -39,7 +39,7 @@ export async function renderAndStore(
 
   const model = await buildRenderModel(report, storage, project?.name ?? 'Project', reviewed);
   const html = renderReportHtml(model);
-  const pdf = await renderReportPdf(html);
+  const pdf = await renderReportPdf(html, buildPdfFooter(model));
 
   const htmlKey = storageKeys.html(reportId);
   const pdfKey = storageKeys.pdf(reportId);
