@@ -1,0 +1,83 @@
+# Render Blueprint for the FieldReport DEV / STAGING server (Docker).
+#
+# This is the dev twin of render.yaml. It deploys the `develop` branch to a SECOND,
+# fully isolated Render service `fieldreport-server-dev` with its OWN Neon DB and its
+# OWN R2 bucket — it must NEVER point at the production Neon DB or production R2 bucket.
+# Production (render.yaml → fieldreport-server, branch master) is left completely untouched.
+#
+# In Render: New → Blueprint → pick this repo → choose render.dev.yaml → paste the dev
+# secret values (the ones marked sync:false) → Deploy. PUBLIC_BASE_URL is auto-detected
+# from Render's RENDER_EXTERNAL_URL, so there is no manual URL step or redeploy for it.
+#
+# See DEV_ENV.md for the step-by-step dashboard runbook and which value goes where.
+#
+# PLAN: matches prod (standard / 2 GB) so dev renders PDFs the same way prod does
+# (headless Chromium is memory-hungry; starter/512 MB can OOM on larger reports). Drop to
+# starter later if you want to save cost and your dev reports stay small.
+services:
+  - type: web
+    name: fieldreport-server-dev
+    runtime: docker
+    dockerfilePath: ./apps/server/Dockerfile
+    dockerContext: .
+    plan: standard
+    region: oregon
+    branch: develop
+    healthCheckPath: /healthz
+    autoDeploy: true
+    envVars:
+      # ── AI providers (optional in dev: leave blank to run MOCK STT/synthesis) ──
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: ANTHROPIC_MODEL
+        value: claude-sonnet-4-6
+      - key: DEEPGRAM_API_KEY
+        sync: false
+      - key: DEEPGRAM_MODEL
+        value: nova-3
+      # ── DEV database (separate Neon project/branch — NOT prod) ──
+      - key: DATABASE_URL
+        sync: false
+      # ── DEV object storage (separate R2 bucket fieldreport-media-dev — NOT prod) ──
+      - key: S3_BUCKET
+        sync: false
+      - key: S3_ENDPOINT
+        sync: false
+      - key: S3_REGION
+        value: auto
+      - key: S3_ACCESS_KEY_ID
+        sync: false
+      - key: S3_SECRET_ACCESS_KEY
+        sync: false
+      # ── Admin break-glass token (generate a DEV-only token, not the prod one) ──
+      - key: ADMIN_TOKEN
+        sync: false
+      # ── Auth (Phase 1+): 0 = indefinite sessions (D-2) ──
+      - key: SESSION_TTL_DAYS
+        value: "0"
+      # ── CORS allowlist: set to the dev Vercel origins once they exist (comma list).
+      #    Leave UNSET on first deploy → server stays permissive so the SPAs can connect;
+      #    fill it in and redeploy after the Vercel dev projects are created. ──
+      - key: CORS_ALLOWED_ORIGINS
+        sync: false
+      # ── Email (Phase 5+): leave RESEND_API_KEY blank → MOCK email driver in dev ──
+      - key: RESEND_API_KEY
+        sync: false
+      - key: EMAIL_FROM
+        value: FieldReport (dev) <reports@fieldreport.app>
+      # ── Invite-accept links target the web-dev app (Phase 6+) ──
+      - key: WEB_BASE_URL
+        sync: false
+      # ── Pilot org + admin bootstrap for the DEV tenant (Phase 4 seed) ──
+      - key: PILOT_ORG_ID
+        value: org_pilot_dev
+      - key: PILOT_ORG_NAME
+        value: Watson Builders (dev)
+      - key: PILOT_PROJECT_NAME
+        value: Watson Island
+      - key: PILOT_SUPER_NAME
+        sync: false
+      - key: PILOT_SUPER_EMAIL
+        sync: false
+      - key: PILOT_SUPER_PASSWORD
+        sync: false

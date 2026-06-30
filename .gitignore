@@ -13,6 +13,7 @@ apps/*/dist/
 .env
 .env.*
 !.env.example
+!.env.dev.example
 
 # local dev data (object storage + pglite)
 .data/

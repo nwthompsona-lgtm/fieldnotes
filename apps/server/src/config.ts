@@ -76,6 +76,16 @@ export const config = {
     project: env.LANGCHAIN_PROJECT ?? env.LANGSMITH_PROJECT ?? 'fieldreport',
   },
 
+  cors: {
+    /** Allowlist of SPA origins (capture + web), comma-separated in CORS_ALLOWED_ORIGINS.
+     *  Empty => permissive `origin:true` for local dev. Parsed here in Phase 0; the actual
+     *  @fastify/cors swap (allowlist when set, else origin:true) lands in Phase 3 (auth core). */
+    allowedOrigins: (env.CORS_ALLOWED_ORIGINS ?? '')
+      .split(',')
+      .map((s) => s.trim())
+      .filter(Boolean),
+  },
+
   admin: {
     /** Bearer token gating /api/admin/*. Generated/required for prod. */
     token: env.ADMIN_TOKEN ?? 'dev-admin-token',
