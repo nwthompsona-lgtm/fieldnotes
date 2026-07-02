@@ -12,6 +12,7 @@ import { getDb, ensureSchema, makeRepo } from './db/index.js';
 import { makeStorage } from './storage/index.js';
 import { makeTranscriber } from './stt/index.js';
 import { makeSynthesizer } from './synthesis/index.js';
+import { makeSessions, type SessionManager } from './auth/sessions.js';
 import { PILOT_GLOSSARY } from './pilot.js';
 
 export interface ServerDeps {
@@ -21,6 +22,7 @@ export interface ServerDeps {
   storage: StorageDriver;
   transcriber: Transcriber;
   synthesizer: Synthesizer;
+  sessions: SessionManager;
 }
 
 export async function buildDeps(config: AppConfig): Promise<ServerDeps> {
@@ -44,5 +46,6 @@ export async function buildDeps(config: AppConfig): Promise<ServerDeps> {
     storage: makeStorage(config),
     transcriber: makeTranscriber(config),
     synthesizer: makeSynthesizer(config),
+    sessions: makeSessions(repo, config),
   };
 }

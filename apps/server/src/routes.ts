@@ -16,10 +16,15 @@ import { runPipeline, renderAndStore } from './pipeline.js';
 import { storageKeys } from './storage/types.js';
 import { reportQualityMetrics, computeRollup } from './quality.js';
 import { recordRunFeedback } from './observability.js';
+import { registerAuthRoutes } from './auth/routes.js';
 
 export function registerRoutes(app: FastifyInstance, deps: ServerDeps): void {
   const { repo, storage, config } = deps;
   const base = config.publicBaseUrl;
+
+  // /api/auth/* (signup/login/logout/me — auth plan §4.2). Existing routes below stay
+  // unguarded until Phase 4 (route scoping).
+  registerAuthRoutes(app, deps);
 
   // Resolve a stored Report for API consumers: attach hosted html/pdf links and turn
   // each photo's storage key into a displayable URL (contract allows blobRef = key|URL).
