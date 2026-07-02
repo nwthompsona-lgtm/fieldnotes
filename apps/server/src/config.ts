@@ -76,6 +76,26 @@ export const config = {
     project: env.LANGCHAIN_PROJECT ?? env.LANGSMITH_PROJECT ?? 'fieldreport',
   },
 
+  auth: {
+    /** Session lifetime in days; 0 = indefinite (`expires_at = null`, revoke-only) per D-2. */
+    sessionTtlDays: Number(env.SESSION_TTL_DAYS ?? 0),
+  },
+
+  email: {
+    /** 'resend' when key present, else 'mock' (writes under .data + logs), mirroring the
+     *  STT/synthesis provider pattern. EMAIL_PROVIDER forces either. */
+    provider: ((env.EMAIL_PROVIDER as 'resend' | 'mock' | undefined) ??
+      (env.RESEND_API_KEY ? 'resend' : 'mock')) as 'resend' | 'mock',
+    resendApiKey: env.RESEND_API_KEY,
+    from: env.EMAIL_FROM ?? 'FieldReport <reports@fieldreport.app>',
+  },
+
+  app: {
+    /** Web SPA base for invite-accept links (§10). Distinct from publicBaseUrl (the API
+     *  origin): invite links land on the web app, share links land on the server's /s. */
+    webBaseUrl: env.WEB_BASE_URL?.replace(/\/$/, ''),
+  },
+
   cors: {
     /** Allowlist of SPA origins (capture + web), comma-separated in CORS_ALLOWED_ORIGINS.
      *  Empty => permissive `origin:true` for local dev. Parsed here in Phase 0; the actual

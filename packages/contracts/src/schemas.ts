@@ -13,7 +13,7 @@ import { z } from 'zod';
 
 /** Bump on any breaking change to the shapes below. The client stamps this into
  *  every upload manifest so the server can reject incompatible bundles. */
-export const CONTRACTS_VERSION = '1.1.0';
+export const CONTRACTS_VERSION = '1.2.0';
 
 // ---------------------------------------------------------------------------
 // Primitives
@@ -39,6 +39,33 @@ export const ProcessingStatus = z.enum([
   'failed', // see processingError
 ]);
 export type ProcessingStatus = z.infer<typeof ProcessingStatus>;
+
+// Roles & tenancy enums (v1.2.0, auth plan §2 / D-1..D-4).
+
+/** Org-level role: admins manage the org, members just belong (D-3). */
+export const OrgRole = z.enum(['admin', 'member']);
+export type OrgRole = z.infer<typeof OrgRole>;
+
+/** Per-project role (D-3). */
+export const ProjectRole = z.enum(['pm', 'super', 'viewer']);
+export type ProjectRole = z.infer<typeof ProjectRole>;
+
+/** Who can view a project's finalized reports (D-4): whole org vs assigned members. */
+export const ProjectVisibility = z.enum(['org', 'assigned']);
+export type ProjectVisibility = z.infer<typeof ProjectVisibility>;
+
+/** What kind of outside company a stakeholder org is (D-8). */
+export const StakeholderKind = z.enum([
+  'owner',
+  'architect',
+  'engineer',
+  'gc',
+  'consultant',
+  'lender',
+  'sub',
+  'other',
+]);
+export type StakeholderKind = z.infer<typeof StakeholderKind>;
 
 // ---------------------------------------------------------------------------
 // Media
@@ -117,6 +144,9 @@ export const Report = z.object({
   processingError: z.string().optional(),
   htmlUrl: z.string().optional(),
   pdfUrl: z.string().optional(),
+  /** Author's user id (v1.2.0, auth plan §1.3). Optional: pre-auth reports lack it
+   *  until the Phase 4 backfill; `superName` stays the display string. */
+  createdBy: z.string().optional(),
   createdAt: Iso8601.optional(),
   updatedAt: Iso8601.optional(),
 });
@@ -135,6 +165,12 @@ export const Project = z.object({
   glossary: z.array(z.string()).default([]),
   /** Reference to the reusable base construction lexicon (§8a). */
   baseLexiconRef: z.string().default('base-construction-v1'),
+  /** Owning org (v1.2.0, auth plan §1.3). Optional: pre-auth rows lack it until the
+   *  Phase 4 backfill adopts them. */
+  orgId: z.string().optional(),
+  /** Per-project visibility (D-4). Optional in the contract so pre-1.2.0 producers stay
+   *  valid; the DB column defaults to 'assigned', so absent = 'assigned'. */
+  visibility: ProjectVisibility.optional(),
 });
 export type Project = z.infer<typeof Project>;
 
@@ -246,6 +282,129 @@ export const AdminReportView = z.object({
   observations: z.array(AdminObservationView),
 });
 export type AdminReportView = z.infer<typeof AdminReportView>;
+
+// ---------------------------------------------------------------------------
+// Auth + multi-tenancy + distribution (v1.2.0, AUTH_MULTITENANCY_PLAN.md §2)
+// ---------------------------------------------------------------------------
+
+/** The only user shape that ever leaves the server — NEVER includes password_hash. */
+export const PublicUser = z.object({
+  id: z.string(),
+  email: z.string(),
+  name: z.string().optional(),
+});
+export type PublicUser = z.infer<typeof PublicUser>;
+
+export const Org = z.object({ id: z.string(), name: z.string() });
+export type Org = z.infer<typeof Org>;
+
+export const Membership = z.object({ orgId: z.string(), orgRole: OrgRole });
+export type Membership = z.infer<typeof Membership>;
+
+export const ProjectMember = z.object({
+  projectId: z.string(),
+  userId: z.string(),
+  role: ProjectRole,
+  user: PublicUser.optional(),
+});
+export type ProjectMember = z.infer<typeof ProjectMember>;
+
+// Auth DTOs (plan §4.2).
+
+export const SignupRequest = z.object({
+  email: z.string().email(),
+  password: z.string().min(8),
+  name: z.string().min(1),
+  orgName: z.string().min(1),
+});
+export type SignupRequest = z.infer<typeof SignupRequest>;
+
+export const LoginRequest = z.object({
+  email: z.string().email(),
+  password: z.string().min(1),
+});
+export type LoginRequest = z.infer<typeof LoginRequest>;
+
+export const AcceptInviteRequest = z.object({
+  token: z.string(),
+  name: z.string().min(1),
+  password: z.string().min(8),
+});
+export type AcceptInviteRequest = z.infer<typeof AcceptInviteRequest>;
+
+export const AuthResponse = z.object({
+  /** Opaque bearer session token (T-1); the SPA stores it and sends Authorization: Bearer. */
+  token: z.string(),
+  user: PublicUser,
+  orgs: z.array(Org.extend({ role: OrgRole })),
+});
+export type AuthResponse = z.infer<typeof AuthResponse>;
+
+export const Me = z.object({
+  user: PublicUser,
+  orgs: z.array(Org.extend({ role: OrgRole })),
+});
+export type Me = z.infer<typeof Me>;
+
+// Stakeholder directory (plan §7, D-8).
+
+export const StakeholderContact = z.object({
+  id: z.string(),
+  name: z.string(),
+  email: z.string().email(),
+  title: z.string().optional(),
+});
+export type StakeholderContact = z.infer<typeof StakeholderContact>;
+
+export const StakeholderOrg = z.object({
+  id: z.string(),
+  name: z.string(),
+  kind: StakeholderKind,
+  contacts: z.array(StakeholderContact).default([]),
+});
+export type StakeholderOrg = z.infer<typeof StakeholderOrg>;
+
+// Send + delivery (plan §8, D-9).
+
+/** Who to send to: whole stakeholder orgs, specific contacts, and typed one-offs. */
+export const SendSelection = z.object({
+  orgIds: z.array(z.string()).default([]),
+  contactIds: z.array(z.string()).default([]),
+  adHoc: z
+    .array(z.object({ name: z.string(), email: z.string().email() }))
+    .default([]),
+});
+export type SendSelection = z.infer<typeof SendSelection>;
+
+export const SendRequest = z.object({
+  selection: SendSelection,
+  message: z.string().optional(),
+  /** Per-person link lifetime (D-9: 30d default, revocable). */
+  expiresInDays: z.number().int().positive().default(30),
+});
+export type SendRequest = z.infer<typeof SendRequest>;
+
+export const Recipient = z.object({
+  id: z.string(),
+  name: z.string(),
+  email: z.string(),
+  /** Stakeholder org display name, when the recipient came from the directory. */
+  org: z.string().optional(),
+  sentAt: z.string(),
+  firstOpenedAt: z.string().optional(),
+  revokedAt: z.string().optional(),
+  openCount: z.number().int(),
+});
+export type Recipient = z.infer<typeof Recipient>;
+
+export const ReportSend = z.object({
+  id: z.string(),
+  reportId: z.string(),
+  sentBy: PublicUser,
+  sentAt: z.string(),
+  recipients: z.array(Recipient),
+});
+export type ReportSend = z.infer<typeof ReportSend>;
 
 // ---------------------------------------------------------------------------
 // Helpers

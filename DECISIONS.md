@@ -146,6 +146,19 @@ server-side Project (and its accruing glossary).
   The curated `PILOT_GLOSSARY` only attaches to the seeded `pilot-project`; per-project STT biasing
   for real project nouns is now keyed to whatever label the user actually uses (see [[A2]]).
 
+**D20. Contracts 1.1.0 → 1.2.0 — auth/multi-tenancy/distribution shapes (additive).** Per
+`AUTH_MULTITENANCY_PLAN.md` §2 (Phase 1). Existing shapes unchanged except two optional
+additions: `Report.createdBy?` (author user id; `superName` stays the display string) and
+`Project.orgId?` + `Project.visibility?` (visibility optional in the contract — the DB
+column defaults to `'assigned'`, so absent = `'assigned'`; kept optional rather than
+zod-`.default()` so pre-1.2.0 producers and existing object literals stay type-valid).
+New schemas: role enums (`OrgRole`, `ProjectRole`, `ProjectVisibility`, `StakeholderKind`),
+identity (`PublicUser` — never carries a password hash — `Org`, `Membership`,
+`ProjectMember`), auth DTOs (`SignupRequest`, `LoginRequest`, `AcceptInviteRequest`,
+`AuthResponse`, `Me`), stakeholder directory (`StakeholderOrg`, `StakeholderContact`),
+and send/delivery (`SendSelection`, `SendRequest`, `Recipient`, `ReportSend`). The
+capture↔server `UploadManifest` seam is untouched, so v1.1.0 capture clients still upload.
+
 ## Assumptions (revisit if wrong)
 
 **A1. Single super, single project, hardcoded/magic-link auth** (spec §12). Pilot seeds
