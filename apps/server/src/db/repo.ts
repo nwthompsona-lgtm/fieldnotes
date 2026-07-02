@@ -10,15 +10,75 @@ import type {
   ProcessingStatus,
   Project,
   UploadManifest,
+  ProjectMember,
+  StakeholderOrg,
+  ReportSend,
 } from '@fieldreport/contracts';
 import type { SynthesisOutput } from '../synthesis/types.js';
 import type { Db } from './client.js';
 import type { IngestMediaKeys, ProcessingObservation, Repo } from './types.js';
-import { reportIdForWalk } from '../ids.js';
-import { projects, reports, observations, photos } from './schema.js';
+import { reportIdForWalk, newId } from '../ids.js';
+import {
+  projects,
+  reports,
+  observations,
+  photos,
+  orgs,
+  users,
+  sessions,
+  memberships,
+  invitations,
+  projectMembers,
+  stakeholderOrgs,
+  stakeholderContacts,
+  projectStakeholders,
+  projectDistributionDefaults,
+  reportSends,
+  reportSendRecipients,
+  type ProjectRow,
+  type StakeholderOrgRow,
+  type StakeholderContactRow,
+} from './schema.js';
 
 const iso = (v: Date | string): string =>
   v instanceof Date ? v.toISOString() : new Date(v).toISOString();
+
+/** Emails are normalized lowercase at this layer (unique index is on lower(email)). */
+const normEmail = (email: string): string => email.trim().toLowerCase();
+
+const mapProject = (p: ProjectRow): Project => ({
+  id: p.id,
+  name: p.name,
+  superName: p.superName,
+  glossary: p.glossary ?? [],
+  baseLexiconRef: p.baseLexiconRef,
+  orgId: p.orgId ?? undefined,
+  visibility: p.visibility,
+});
+
+/** Assemble StakeholderOrg[] (contract shape, contacts nested) from row sets. */
+const mapStakeholderOrgs = (
+  sos: StakeholderOrgRow[],
+  contacts: StakeholderContactRow[],
+): StakeholderOrg[] => {
+  const byOrg = new Map<string, StakeholderContactRow[]>();
+  for (const c of contacts) {
+    const list = byOrg.get(c.stakeholderOrgId) ?? [];
+    list.push(c);
+    byOrg.set(c.stakeholderOrgId, list);
+  }
+  return sos.map((s) => ({
+    id: s.id,
+    name: s.name,
+    kind: s.kind,
+    contacts: (byOrg.get(s.id) ?? []).map((c) => ({
+      id: c.id,
+      name: c.name,
+      email: c.email,
+      title: c.title ?? undefined,
+    })),
+  }));
+};
 
 export function makeRepo(db: Db): Repo {
   async function assembleReport(id: string): Promise<Report | null> {
@@ -76,6 +136,7 @@ export function makeRepo(db: Db): Repo {
       status: r.status,
       processing: r.processing,
       processingError: r.processingError ?? undefined,
+      createdBy: r.createdBy ?? undefined,
       createdAt: iso(r.createdAt),
       updatedAt: iso(r.updatedAt),
     };
@@ -85,13 +146,7 @@ export function makeRepo(db: Db): Repo {
     async getProject(id) {
       const p = (await db.select().from(projects).where(eq(projects.id, id)).limit(1))[0];
       if (!p) return null;
-      return {
-        id: p.id,
-        name: p.name,
-        superName: p.superName,
-        glossary: p.glossary ?? [],
-        baseLexiconRef: p.baseLexiconRef,
-      };
+      return mapProject(p);
     },
 
     async upsertProject(p: Project) {
@@ -404,6 +459,579 @@ export function makeRepo(db: Db): Repo {
           transcriptConfidence: o.transcriptConfidence ?? null,
         })),
       }));
+    },
+
+    // --- auth + multi-tenancy + distribution (AUTH_MULTITENANCY_PLAN.md §3) ---
+
+    // identity
+
+    async createUser(u) {
+      await db.insert(users).values({
+        id: u.id,
+        email: normEmail(u.email),
+        name: u.name,
+        passwordHash: u.passwordHash ?? null,
+      });
+    },
+
+    async getUserByEmail(email) {
+      const r = (
+        await db
+          .select()
+          .from(users)
+          .where(sql`lower(${users.email}) = ${normEmail(email)}`)
+          .limit(1)
+      )[0];
+      return r ?? null;
+    },
+
+    async getUserById(id) {
+      const r = (await db.select().from(users).where(eq(users.id, id)).limit(1))[0];
+      return r ?? null;
+    },
+
+    async setUserPassword(id, passwordHash) {
+      await db.update(users).set({ passwordHash }).where(eq(users.id, id));
+    },
+
+    // sessions
+
+    async createSession(s) {
+      await db.insert(sessions).values({ id: s.id, userId: s.userId, expiresAt: s.expiresAt });
+    },
+
+    async getSession(token) {
+      const r = (
+        await db
+          .select({
+            userId: sessions.userId,
+            expiresAt: sessions.expiresAt,
+            revokedAt: sessions.revokedAt,
+          })
+          .from(sessions)
+          .where(eq(sessions.id, token))
+          .limit(1)
+      )[0];
+      if (!r) return null;
+      return { userId: r.userId, expiresAt: r.expiresAt ?? null, revokedAt: r.revokedAt ?? null };
+    },
+
+    async touchSession(token) {
+      await db.update(sessions).set({ lastSeenAt: new Date() }).where(eq(sessions.id, token));
+    },
+
+    async revokeSession(token) {
+      // COALESCE keeps the first revocation time if revoke is called twice.
+      await db
+        .update(sessions)
+        .set({ revokedAt: sql`COALESCE(${sessions.revokedAt}, now())` })
+        .where(eq(sessions.id, token));
+    },
+
+    // orgs + memberships
+
+    async createOrg(o) {
+      await db.insert(orgs).values({ id: o.id, name: o.name });
+    },
+
+    async getOrg(id) {
+      const r = (await db.select().from(orgs).where(eq(orgs.id, id)).limit(1))[0];
+      return r ? { id: r.id, name: r.name } : null;
+    },
+
+    async addMembership(m) {
+      await db
+        .insert(memberships)
+        .values({ id: m.id, userId: m.userId, orgId: m.orgId, orgRole: m.orgRole });
+    },
+
+    async getMembership(userId, orgId) {
+      const r = (
+        await db
+          .select({ orgRole: memberships.orgRole })
+          .from(memberships)
+          .where(and(eq(memberships.userId, userId), eq(memberships.orgId, orgId)))
+          .limit(1)
+      )[0];
+      return r ?? null;
+    },
+
+    async listOrgsForUser(userId) {
+      return db
+        .select({ id: orgs.id, name: orgs.name, role: memberships.orgRole })
+        .from(memberships)
+        .innerJoin(orgs, eq(memberships.orgId, orgs.id))
+        .where(eq(memberships.userId, userId))
+        .orderBy(asc(orgs.name));
+    },
+
+    async listOrgMembers(orgId) {
+      const mrows = await db
+        .select({
+          id: users.id,
+          email: users.email,
+          name: users.name,
+          orgRole: memberships.orgRole,
+        })
+        .from(memberships)
+        .innerJoin(users, eq(memberships.userId, users.id))
+        .where(eq(memberships.orgId, orgId))
+        .orderBy(asc(users.name));
+      if (!mrows.length) return [];
+      const pmRows = await db
+        .select({
+          projectId: projectMembers.projectId,
+          userId: projectMembers.userId,
+          role: projectMembers.projectRole,
+        })
+        .from(projectMembers)
+        .innerJoin(projects, eq(projectMembers.projectId, projects.id))
+        .where(
+          and(
+            eq(projects.orgId, orgId),
+            inArray(projectMembers.userId, mrows.map((m) => m.id)),
+          ),
+        );
+      const byUser = new Map<string, ProjectMember[]>();
+      for (const pm of pmRows) {
+        const list = byUser.get(pm.userId) ?? [];
+        list.push({ projectId: pm.projectId, userId: pm.userId, role: pm.role });
+        byUser.set(pm.userId, list);
+      }
+      return mrows.map((m) => ({
+        id: m.id,
+        email: m.email,
+        name: m.name,
+        orgRole: m.orgRole,
+        projects: byUser.get(m.id) ?? [],
+      }));
+    },
+
+    // invitations
+
+    async createInvitation(i) {
+      await db.insert(invitations).values({
+        id: i.id,
+        orgId: i.orgId,
+        email: normEmail(i.email),
+        orgRole: i.orgRole,
+        projectAssignments: i.projectAssignments,
+        token: i.token,
+        invitedBy: i.invitedBy,
+        expiresAt: i.expiresAt,
+      });
+    },
+
+    async getInvitationByToken(token) {
+      const r = (
+        await db.select().from(invitations).where(eq(invitations.token, token)).limit(1)
+      )[0];
+      return r ?? null;
+    },
+
+    async markInvitationAccepted(id) {
+      await db
+        .update(invitations)
+        .set({ acceptedAt: new Date() })
+        .where(eq(invitations.id, id));
+    },
+
+    // projects (tenancy-aware)
+
+    async listProjectsForUser(userId, orgId) {
+      const mem = (
+        await db
+          .select({ orgRole: memberships.orgRole })
+          .from(memberships)
+          .where(and(eq(memberships.userId, userId), eq(memberships.orgId, orgId)))
+          .limit(1)
+      )[0];
+      if (!mem) return [];
+      const projRows = await db
+        .select()
+        .from(projects)
+        .where(eq(projects.orgId, orgId))
+        .orderBy(asc(projects.name));
+      if (mem.orgRole === 'admin') return projRows.map(mapProject);
+      const pmRows = await db
+        .select({ projectId: projectMembers.projectId })
+        .from(projectMembers)
+        .where(eq(projectMembers.userId, userId));
+      const memberOf = new Set(pmRows.map((r) => r.projectId));
+      return projRows
+        .filter((p) => memberOf.has(p.id) || p.visibility === 'org')
+        .map(mapProject);
+    },
+
+    async createProject(p) {
+      await db.insert(projects).values({
+        id: p.id,
+        orgId: p.orgId,
+        name: p.name,
+        superName: p.superName,
+        visibility: p.visibility,
+      });
+    },
+
+    async setProjectVisibility(id, v) {
+      await db.update(projects).set({ visibility: v }).where(eq(projects.id, id));
+    },
+
+    async getProjectOrgId(projectId) {
+      const r = (
+        await db
+          .select({ orgId: projects.orgId })
+          .from(projects)
+          .where(eq(projects.id, projectId))
+          .limit(1)
+      )[0];
+      return r?.orgId ?? null;
+    },
+
+    async addProjectMember(pm) {
+      await db.insert(projectMembers).values({
+        id: pm.id,
+        projectId: pm.projectId,
+        userId: pm.userId,
+        projectRole: pm.role,
+      });
+    },
+
+    async removeProjectMember(projectId, userId) {
+      await db
+        .delete(projectMembers)
+        .where(and(eq(projectMembers.projectId, projectId), eq(projectMembers.userId, userId)));
+    },
+
+    async listProjectMembers(projectId) {
+      const rows = await db
+        .select({
+          projectId: projectMembers.projectId,
+          userId: projectMembers.userId,
+          role: projectMembers.projectRole,
+          uid: users.id,
+          uemail: users.email,
+          uname: users.name,
+        })
+        .from(projectMembers)
+        .innerJoin(users, eq(projectMembers.userId, users.id))
+        .where(eq(projectMembers.projectId, projectId))
+        .orderBy(asc(users.name));
+      return rows.map((r) => ({
+        projectId: r.projectId,
+        userId: r.userId,
+        role: r.role,
+        user: { id: r.uid, email: r.uemail, name: r.uname },
+      }));
+    },
+
+    async getProjectRole(projectId, userId) {
+      const r = (
+        await db
+          .select({ role: projectMembers.projectRole })
+          .from(projectMembers)
+          .where(and(eq(projectMembers.projectId, projectId), eq(projectMembers.userId, userId)))
+          .limit(1)
+      )[0];
+      return r?.role ?? null;
+    },
+
+    // reports (scoping)
+
+    async listReportsForProject(projectId) {
+      const rows = await db
+        .select({ id: reports.id })
+        .from(reports)
+        .where(eq(reports.projectId, projectId))
+        .orderBy(desc(reports.createdAt));
+      const out: Report[] = [];
+      for (const row of rows) {
+        const r = await assembleReport(row.id);
+        if (r) out.push(r);
+      }
+      return out;
+    },
+
+    async setReportCreatedBy(reportId, userId) {
+      await db.update(reports).set({ createdBy: userId }).where(eq(reports.id, reportId));
+    },
+
+    // stakeholder directory
+
+    async listStakeholderOrgs(orgId) {
+      const sos = await db
+        .select()
+        .from(stakeholderOrgs)
+        .where(eq(stakeholderOrgs.orgId, orgId))
+        .orderBy(asc(stakeholderOrgs.name));
+      if (!sos.length) return [];
+      const contacts = await db
+        .select()
+        .from(stakeholderContacts)
+        .where(inArray(stakeholderContacts.stakeholderOrgId, sos.map((s) => s.id)))
+        .orderBy(asc(stakeholderContacts.name));
+      return mapStakeholderOrgs(sos, contacts);
+    },
+
+    async createStakeholderOrg(s) {
+      await db
+        .insert(stakeholderOrgs)
+        .values({ id: s.id, orgId: s.orgId, name: s.name, kind: s.kind });
+    },
+
+    async updateStakeholderOrg(id, patch) {
+      const set: Partial<{ name: string; kind: (typeof stakeholderOrgs.$inferSelect)['kind'] }> =
+        {};
+      if (patch.name !== undefined) set.name = patch.name;
+      if (patch.kind !== undefined) set.kind = patch.kind;
+      if (Object.keys(set).length) {
+        await db.update(stakeholderOrgs).set(set).where(eq(stakeholderOrgs.id, id));
+      }
+    },
+
+    async deleteStakeholderOrg(id) {
+      // Contacts cascade; past send recipients keep their denormalized email/name
+      // (contact_id goes SET NULL) so the delivery audit survives directory edits.
+      await db.delete(stakeholderOrgs).where(eq(stakeholderOrgs.id, id));
+    },
+
+    async createStakeholderContact(c) {
+      await db.insert(stakeholderContacts).values({
+        id: c.id,
+        stakeholderOrgId: c.stakeholderOrgId,
+        name: c.name,
+        email: normEmail(c.email),
+        title: c.title ?? null,
+      });
+    },
+
+    async updateStakeholderContact(id, patch) {
+      const set: Partial<{ name: string; email: string; title: string | null }> = {};
+      if (patch.name !== undefined) set.name = patch.name;
+      if (patch.email !== undefined) set.email = normEmail(patch.email);
+      if (patch.title !== undefined) set.title = patch.title;
+      if (Object.keys(set).length) {
+        await db.update(stakeholderContacts).set(set).where(eq(stakeholderContacts.id, id));
+      }
+    },
+
+    async deleteStakeholderContact(id) {
+      await db.delete(stakeholderContacts).where(eq(stakeholderContacts.id, id));
+    },
+
+    async getContactsByIds(ids) {
+      if (!ids.length) return [];
+      const rows = await db
+        .select({
+          id: stakeholderContacts.id,
+          name: stakeholderContacts.name,
+          email: stakeholderContacts.email,
+          title: stakeholderContacts.title,
+          orgName: stakeholderOrgs.name,
+        })
+        .from(stakeholderContacts)
+        .innerJoin(stakeholderOrgs, eq(stakeholderContacts.stakeholderOrgId, stakeholderOrgs.id))
+        .where(inArray(stakeholderContacts.id, ids));
+      return rows.map((r) => ({
+        id: r.id,
+        name: r.name,
+        email: r.email,
+        title: r.title ?? undefined,
+        orgName: r.orgName,
+      }));
+    },
+
+    // project roster + distribution defaults
+
+    async listProjectStakeholders(projectId) {
+      const links = await db
+        .select({ stakeholderOrgId: projectStakeholders.stakeholderOrgId })
+        .from(projectStakeholders)
+        .where(eq(projectStakeholders.projectId, projectId));
+      if (!links.length) return [];
+      const ids = links.map((l) => l.stakeholderOrgId);
+      const sos = await db
+        .select()
+        .from(stakeholderOrgs)
+        .where(inArray(stakeholderOrgs.id, ids))
+        .orderBy(asc(stakeholderOrgs.name));
+      const contacts = sos.length
+        ? await db
+            .select()
+            .from(stakeholderContacts)
+            .where(inArray(stakeholderContacts.stakeholderOrgId, sos.map((s) => s.id)))
+            .orderBy(asc(stakeholderContacts.name))
+        : [];
+      return mapStakeholderOrgs(sos, contacts);
+    },
+
+    async setProjectStakeholders(projectId, stakeholderOrgIds) {
+      await db.transaction(async (tx) => {
+        await tx.delete(projectStakeholders).where(eq(projectStakeholders.projectId, projectId));
+        if (stakeholderOrgIds.length) {
+          await tx.insert(projectStakeholders).values(
+            stakeholderOrgIds.map((soId) => ({
+              id: newId('psk'),
+              projectId,
+              stakeholderOrgId: soId,
+            })),
+          );
+        }
+      });
+    },
+
+    async getDistributionDefault(projectId) {
+      const r = (
+        await db
+          .select({ selection: projectDistributionDefaults.selection })
+          .from(projectDistributionDefaults)
+          .where(eq(projectDistributionDefaults.projectId, projectId))
+          .limit(1)
+      )[0];
+      return r?.selection ?? null;
+    },
+
+    async setDistributionDefault(projectId, selection) {
+      await db
+        .insert(projectDistributionDefaults)
+        .values({ projectId, selection, updatedAt: new Date() })
+        .onConflictDoUpdate({
+          target: projectDistributionDefaults.projectId,
+          set: { selection, updatedAt: new Date() },
+        });
+    },
+
+    // sends + delivery
+
+    async createReportSend(s) {
+      await db.insert(reportSends).values({
+        id: s.id,
+        reportId: s.reportId,
+        sentBy: s.sentBy,
+        message: s.message ?? null,
+      });
+    },
+
+    async createRecipients(rs) {
+      if (!rs.length) return;
+      await db.insert(reportSendRecipients).values(
+        rs.map((r) => ({
+          id: r.id,
+          sendId: r.sendId,
+          contactId: r.contactId ?? null,
+          email: normEmail(r.email),
+          name: r.name,
+          token: r.token,
+          expiresAt: r.expiresAt,
+        })),
+      );
+    },
+
+    async getRecipientByToken(token) {
+      const r = (
+        await db
+          .select({ rec: reportSendRecipients, reportId: reportSends.reportId })
+          .from(reportSendRecipients)
+          .innerJoin(reportSends, eq(reportSendRecipients.sendId, reportSends.id))
+          .where(eq(reportSendRecipients.token, token))
+          .limit(1)
+      )[0];
+      return r ? { ...r.rec, reportId: r.reportId } : null;
+    },
+
+    async recordRecipientOpen(token) {
+      await db
+        .update(reportSendRecipients)
+        .set({
+          firstOpenedAt: sql`COALESCE(${reportSendRecipients.firstOpenedAt}, now())`,
+          lastOpenedAt: sql`now()`,
+          openCount: sql`${reportSendRecipients.openCount} + 1`,
+        })
+        .where(eq(reportSendRecipients.token, token));
+    },
+
+    async revokeRecipient(id) {
+      await db
+        .update(reportSendRecipients)
+        .set({ revokedAt: sql`COALESCE(${reportSendRecipients.revokedAt}, now())` })
+        .where(eq(reportSendRecipients.id, id));
+    },
+
+    async listSendsForReport(reportId) {
+      const sendRows = await db
+        .select({
+          id: reportSends.id,
+          reportId: reportSends.reportId,
+          sentAt: reportSends.sentAt,
+          uid: users.id,
+          uemail: users.email,
+          uname: users.name,
+        })
+        .from(reportSends)
+        .leftJoin(users, eq(reportSends.sentBy, users.id))
+        .where(eq(reportSends.reportId, reportId))
+        .orderBy(desc(reportSends.sentAt));
+      if (!sendRows.length) return [];
+      const recRows = await db
+        .select({ rec: reportSendRecipients, orgName: stakeholderOrgs.name })
+        .from(reportSendRecipients)
+        .leftJoin(
+          stakeholderContacts,
+          eq(reportSendRecipients.contactId, stakeholderContacts.id),
+        )
+        .leftJoin(stakeholderOrgs, eq(stakeholderContacts.stakeholderOrgId, stakeholderOrgs.id))
+        .where(inArray(reportSendRecipients.sendId, sendRows.map((s) => s.id)));
+      const bySend = new Map<string, typeof recRows>();
+      for (const r of recRows) {
+        const list = bySend.get(r.rec.sendId) ?? [];
+        list.push(r);
+        bySend.set(r.rec.sendId, list);
+      }
+      const out: ReportSend[] = sendRows.map((s) => ({
+        id: s.id,
+        reportId: s.reportId,
+        sentBy: { id: s.uid ?? '', email: s.uemail ?? '', name: s.uname ?? undefined },
+        sentAt: iso(s.sentAt),
+        recipients: (bySend.get(s.id) ?? [])
+          .map(({ rec, orgName }) => ({
+            id: rec.id,
+            name: rec.name,
+            email: rec.email,
+            org: orgName ?? undefined,
+            sentAt: iso(s.sentAt),
+            firstOpenedAt: rec.firstOpenedAt ? iso(rec.firstOpenedAt) : undefined,
+            revokedAt: rec.revokedAt ? iso(rec.revokedAt) : undefined,
+            openCount: rec.openCount,
+          }))
+          .sort((a, b) => a.name.localeCompare(b.name)),
+      }));
+      return out;
+    },
+
+    async getReportLatestSendSummary(reportId) {
+      const latest = (
+        await db
+          .select({ id: reportSends.id, sentAt: reportSends.sentAt })
+          .from(reportSends)
+          .where(eq(reportSends.reportId, reportId))
+          .orderBy(desc(reportSends.sentAt))
+          .limit(1)
+      )[0];
+      if (!latest) return null;
+      const counts = (
+        await db
+          .select({
+            total: sql<number>`count(*)::int`,
+            opened: sql<number>`count(${reportSendRecipients.firstOpenedAt})::int`,
+          })
+          .from(reportSendRecipients)
+          .where(eq(reportSendRecipients.sendId, latest.id))
+      )[0];
+      return {
+        sentAt: iso(latest.sentAt),
+        opened: Number(counts?.opened ?? 0),
+        total: Number(counts?.total ?? 0),
+      };
     },
   };
 }

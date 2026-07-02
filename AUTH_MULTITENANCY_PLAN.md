@@ -463,7 +463,7 @@ Legend: ⬜ todo · 🟡 in progress · ✅ done (on `develop`) · 🚀 promoted
 
 - 🟡 **Phase 0** — Dev/staging environment. Repo side ✅ on `develop` (`render.dev.yaml`, `cors.allowedOrigins` in config, `.env.dev.example` ×3, `DEV_ENV.md`). Awaiting the human dashboard steps (Neon-dev DB, R2-dev bucket, Render-dev service, 2× Vercel-dev projects) per `DEV_ENV.md` → then record `<DEV_SERVER_URL>` + dev SPA URLs here.
 - ✅ **Phase 1** — Foundation: deps + config + `newId`; schema + idempotent DDL; contracts `1.2.0` (D20). 12 new tables + 2 nullable alters; verified: contracts build, typecheck, 28/28 tests, dryrun.
-- ⬜ **Phase 2** — Repo methods (§3)
+- ✅ **Phase 2** — Repo methods (§3). All groups implemented in `db/{types,repo}.ts` (pure additions); `test/repo-auth.test.ts` covers CRUD per entity (23 tests, 51/51 green).
 - ⬜ **Phase 3** — Auth core (passwords, sessions, `req.auth`, signup/login/logout/me) + CORS allowlist
 - ⬜ **Phase 4** — Pilot seed/backfill + authz + scope every existing route + reports-list  ← **milestone: app fully auth-gated; prod-promotable**
 - ⬜ **Phase 5** — Email driver seam (resend + mock) + templates
