@@ -14,6 +14,7 @@ import { makeStorage } from './storage/index.js';
 import { makeTranscriber } from './stt/index.js';
 import { makeSynthesizer } from './synthesis/index.js';
 import { makeSessions, type SessionManager } from './auth/sessions.js';
+import { makeEmail, type EmailDriver } from './email/index.js';
 import { hash } from './auth/passwords.js';
 import { newId } from './ids.js';
 import { PILOT_GLOSSARY } from './pilot.js';
@@ -26,6 +27,7 @@ export interface ServerDeps {
   transcriber: Transcriber;
   synthesizer: Synthesizer;
   sessions: SessionManager;
+  email: EmailDriver;
 }
 
 /**
@@ -110,5 +112,6 @@ export async function buildDeps(config: AppConfig): Promise<ServerDeps> {
     transcriber: makeTranscriber(config),
     synthesizer: makeSynthesizer(config),
     sessions: makeSessions(repo, config),
+    email: makeEmail(config),
   };
 }

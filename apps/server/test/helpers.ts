@@ -13,6 +13,7 @@ import { makeStorage } from '../src/storage/index.js';
 import { makeTranscriber } from '../src/stt/index.js';
 import { makeSynthesizer } from '../src/synthesis/index.js';
 import { makeSessions } from '../src/auth/sessions.js';
+import { makeMockEmail } from '../src/email/index.js';
 import { config, type AppConfig } from '../src/config.js';
 import type { Db } from '../src/db/client.js';
 import type { ServerDeps } from '../src/deps.js';
@@ -27,6 +28,7 @@ export async function buildTestDeps(overrides?: Partial<AppConfig>): Promise<Ser
     auth: { sessionTtlDays: 0 },
     cors: { allowedOrigins: [] },
     admin: { token: 'test-admin-token', breakGlass: false },
+    email: { ...config.email, provider: 'mock' },
     ...overrides,
   } as AppConfig;
   const db = drizzle(new PGlite(), { schema }) as unknown as Db;
@@ -40,5 +42,7 @@ export async function buildTestDeps(overrides?: Partial<AppConfig>): Promise<Ser
     transcriber: makeTranscriber(cfg),
     synthesizer: makeSynthesizer(cfg),
     sessions: makeSessions(repo, cfg),
+    // Direct mock (not makeEmail) so tests can reach `.sent` without a cast.
+    email: makeMockEmail('.data/test-email'),
   };
 }
