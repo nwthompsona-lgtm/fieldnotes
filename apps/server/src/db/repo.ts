@@ -3,7 +3,7 @@
  * rows in/out. Upload is idempotent on walkId (a retried upload returns the existing
  * report rather than duplicating). Implements the Repo interface in db/types.ts.
  */
-import { eq, and, asc, desc, inArray, sql } from 'drizzle-orm';
+import { eq, and, asc, desc, inArray, isNull, sql } from 'drizzle-orm';
 import type {
   Report,
   ReportEdit,
@@ -163,7 +163,7 @@ export function makeRepo(db: Db): Repo {
     return (await assembleReportsBatch([id]))[0] ?? null;
   }
 
-  return {
+  const api: Repo = {
     async getProject(id) {
       const p = (await db.select().from(projects).where(eq(projects.id, id)).limit(1))[0];
       if (!p) return null;
@@ -785,8 +785,63 @@ export function makeRepo(db: Db): Repo {
       return assembleReportsBatch(rows.map((r) => r.id));
     },
 
+    async listReportsForOrgs(orgIds) {
+      if (!orgIds.length) return [];
+      const rows = await db
+        .select({ id: reports.id })
+        .from(reports)
+        .innerJoin(projects, eq(reports.projectId, projects.id))
+        .where(inArray(projects.orgId, orgIds))
+        .orderBy(desc(reports.createdAt));
+      return assembleReportsBatch(rows.map((r) => r.id));
+    },
+
+    async getReportOrgId(reportId) {
+      const r = (
+        await db
+          .select({ orgId: projects.orgId })
+          .from(reports)
+          .innerJoin(projects, eq(reports.projectId, projects.id))
+          .where(eq(reports.id, reportId))
+          .limit(1)
+      )[0];
+      return r?.orgId ?? null;
+    },
+
     async setReportCreatedBy(reportId, userId) {
-      await db.update(reports).set({ createdBy: userId }).where(eq(reports.id, reportId));
+      // Fill-if-null: retried uploads and the boot backfill never flip an author.
+      await db
+        .update(reports)
+        .set({ createdBy: userId })
+        .where(and(eq(reports.id, reportId), isNull(reports.createdBy)));
+    },
+
+    // seed / backfill (§12)
+
+    async upsertOrg(o) {
+      await db
+        .insert(orgs)
+        .values({ id: o.id, name: o.name })
+        .onConflictDoUpdate({ target: orgs.id, set: { name: o.name } });
+    },
+
+    async adoptOrphanProjects(orgId) {
+      await db.update(projects).set({ orgId }).where(isNull(projects.orgId));
+    },
+
+    async backfillReportsCreatedBy(userId) {
+      await db.update(reports).set({ createdBy: userId }).where(isNull(reports.createdBy));
+    },
+
+    async listReportQualityForOrgs(orgIds) {
+      if (!orgIds.length) return [];
+      const scoped = await db
+        .select({ id: reports.id })
+        .from(reports)
+        .innerJoin(projects, eq(reports.projectId, projects.id))
+        .where(inArray(projects.orgId, orgIds));
+      const ids = new Set(scoped.map((r) => r.id));
+      return (await api.listReportQuality()).filter((q) => ids.has(q.id));
     },
 
     // stakeholder directory
@@ -1070,4 +1125,5 @@ export function makeRepo(db: Db): Repo {
       };
     },
   };
+  return api;
 }

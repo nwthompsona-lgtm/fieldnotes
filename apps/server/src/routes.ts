@@ -3,7 +3,7 @@
  * and kicks off async processing; review/finalize is the trust gate; /r/:id(.pdf) is the
  * shareable hosted artifact; /api/admin/* is token-gated raw-vs-polished.
  */
-import type { FastifyInstance } from 'fastify';
+import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import {
   UploadManifest,
   ReportEdit,
@@ -17,15 +17,21 @@ import { storageKeys } from './storage/types.js';
 import { reportQualityMetrics, computeRollup } from './quality.js';
 import { recordRunFeedback } from './observability.js';
 import { registerAuthRoutes } from './auth/routes.js';
-import { bearerToken } from './auth/context.js';
+import { bearerToken, requireAuth } from './auth/context.js';
+import { makeAuthz } from './auth/authz.js';
 
 export function registerRoutes(app: FastifyInstance, deps: ServerDeps): void {
   const { repo, storage, config } = deps;
   const base = config.publicBaseUrl;
+  const authz = makeAuthz(repo);
 
-  // /api/auth/* (signup/login/logout/me — auth plan §4.2). Existing routes below stay
-  // unguarded until Phase 4 (route scoping).
+  // /api/auth/* (signup/login/logout/me — auth plan §4.2).
   registerAuthRoutes(app, deps);
+
+  /** Break-glass superadmin (§15.3): the static ADMIN_TOKEN sees all orgs, but only
+   *  when explicitly enabled — off by default since Phase 4 re-gated /api/admin/*. */
+  const isBreakGlass = (req: Parameters<typeof bearerToken>[0]): boolean =>
+    config.admin.breakGlass && bearerToken(req) === config.admin.token;
 
   // Resolve a stored Report for API consumers: attach hosted html/pdf links and turn
   // each photo's storage key into a displayable URL (contract allows blobRef = key|URL).
@@ -86,7 +92,10 @@ export function registerRoutes(app: FastifyInstance, deps: ServerDeps): void {
   }));
 
   // ── Upload (multipart: manifest field + media parts) ──────────────────────
-  app.post('/api/upload', async (req, reply) => {
+  // §6.1: authenticated; caller needs capture rights (org admin / pm / super) on an
+  // EXISTING, org-adopted project. Authorship + display name come from the session,
+  // not the manifest.
+  app.post('/api/upload', { preHandler: requireAuth }, async (req, reply) => {
     let manifestRaw: string | undefined;
     const files = new Map<string, Uint8Array>();
     for await (const part of req.parts()) {
@@ -111,7 +120,14 @@ export function registerRoutes(app: FastifyInstance, deps: ServerDeps): void {
       return reply.code(400).send({ error: 'invalid manifest', issues: parsed.error.issues });
     }
 
-    const result = await processUpload({ manifest: parsed.data, files, storage, repo });
+    if (!(await authz.canCapture(req, parsed.data.projectId))) {
+      return reply.code(403).send({ error: 'no capture access to this project' });
+    }
+    // The session, not the manifest, says who prepared the report.
+    const manifest = { ...parsed.data, superName: req.auth!.user.name ?? parsed.data.superName };
+
+    const result = await processUpload({ manifest, files, storage, repo });
+    await repo.setReportCreatedBy(result.reportId, req.auth!.userId); // fill-if-null
     // Fire-and-forget processing; failures recorded as processing='failed'.
     void runPipeline(deps, result.reportId).catch((err) =>
       app.log.error({ err, reportId: result.reportId }, 'pipeline failed'),
@@ -120,20 +136,71 @@ export function registerRoutes(app: FastifyInstance, deps: ServerDeps): void {
   });
 
   // ── Reports ───────────────────────────────────────────────────────────────
-  app.get<{ Params: { id: string } }>('/api/reports/:id', async (req, reply) => {
-    const r = await repo.getReport(req.params.id);
-    if (!r) return reply.code(404).send({ error: 'not found' });
-    return resolveReport(r);
-  });
 
-  app.get<{ Params: { id: string } }>('/api/reports/:id/status', async (req, reply) => {
-    const s = await repo.getReportStatus(req.params.id);
-    if (!s) return reply.code(404).send({ error: 'not found' });
-    return s;
-  });
+  // §6.2: the scoped list (replaces /api/admin/reports for normal users). Role-aware:
+  // pm/super/admin see drafts + finalized; viewers and visibility-org members see
+  // finalized only. Each row carries the latest-send chip (null until Phase 8 sends).
+  app.get<{ Querystring: { projectId?: string } }>(
+    '/api/reports',
+    { preHandler: requireAuth },
+    async (req, reply) => {
+      const projectId = req.query.projectId;
+      if (!projectId) return reply.code(400).send({ error: 'projectId query is required' });
+      if (!(await authz.canViewProject(req, projectId))) {
+        return reply.code(404).send({ error: 'not found' }); // don't leak existence
+      }
+      const all = await repo.listReportsForProject(projectId);
+      const visible = [];
+      for (const r of all) if (await authz.canViewReport(req, r)) visible.push(r);
+      // Per-row rollup is 2 small queries each — fine at pilot scale; batch when the
+      // list view grows (getReportLatestSendSummary batching noted in the plan).
+      return Promise.all(
+        visible.map(async (r) => ({
+          ...(await resolveReport(r)),
+          lastSend: await repo.getReportLatestSendSummary(r.id),
+        })),
+      );
+    },
+  );
 
-  // Inline edits — draft only (review gate, spec §3).
-  app.patch<{ Params: { id: string } }>('/api/reports/:id', async (req, reply) => {
+  app.get<{ Params: { id: string } }>(
+    '/api/reports/:id',
+    { preHandler: requireAuth },
+    async (req, reply) => {
+      const r = await repo.getReport(req.params.id);
+      // 404 (not 403) when unauthorized, to avoid leaking existence (§6.3).
+      if (!r || !(await authz.canViewReport(req, r))) {
+        return reply.code(404).send({ error: 'not found' });
+      }
+      return resolveReport(r);
+    },
+  );
+
+  app.get<{ Params: { id: string } }>(
+    '/api/reports/:id/status',
+    { preHandler: requireAuth },
+    async (req, reply) => {
+      const r = await repo.getReport(req.params.id);
+      if (!r || !(await authz.canViewReport(req, r))) {
+        return reply.code(404).send({ error: 'not found' });
+      }
+      return repo.getReportStatus(req.params.id);
+    },
+  );
+
+  // Inline edits — draft only (review gate, spec §3). §6.4: admin/pm edit any report
+  // on the project; a super edits their own (D-6).
+  app.patch<{ Params: { id: string } }>(
+    '/api/reports/:id',
+    { preHandler: requireAuth },
+    async (req, reply) => {
+    const existing = await repo.getReport(req.params.id);
+    if (!existing || !(await authz.canViewReport(req, existing))) {
+      return reply.code(404).send({ error: 'not found' });
+    }
+    if (!(await authz.canEditReport(req, existing))) {
+      return reply.code(403).send({ error: 'forbidden' });
+    }
     const parsed = ReportEdit.safeParse(req.body);
     if (!parsed.success) {
       return reply.code(400).send({ error: 'invalid edit', issues: parsed.error.issues });
@@ -178,10 +245,19 @@ export function registerRoutes(app: FastifyInstance, deps: ServerDeps): void {
     return resolveReport(result);
   });
 
-  // Finalize: re-render the reviewed version, flip status -> reviewed.
-  app.post<{ Params: { id: string } }>('/api/reports/:id/finalize', async (req, reply) => {
+  // Finalize: re-render the reviewed version, flip status -> reviewed. §6.5:
+  // canFinalize = canEdit (admin/pm any; super their own — D-6).
+  app.post<{ Params: { id: string } }>(
+    '/api/reports/:id/finalize',
+    { preHandler: requireAuth },
+    async (req, reply) => {
     const existing = await repo.getReport(req.params.id);
-    if (!existing) return reply.code(404).send({ error: 'not found' });
+    if (!existing || !(await authz.canViewReport(req, existing))) {
+      return reply.code(404).send({ error: 'not found' });
+    }
+    if (!(await authz.canFinalize(req, existing))) {
+      return reply.code(403).send({ error: 'forbidden' });
+    }
     await renderAndStore(deps, req.params.id, true);
     const r = await repo.finalize(req.params.id);
     if (!r) return reply.code(409).send({ error: 'could not finalize' });
@@ -195,55 +271,108 @@ export function registerRoutes(app: FastifyInstance, deps: ServerDeps): void {
     return resolveReport(r);
   });
 
-  // ── Hosted artifacts (PM-facing) ───────────────────────────────────────────
-  app.get<{ Params: { id: string } }>('/r/:id', async (req, reply) => {
-    if (!(await ensureArtifacts(req.params.id))) {
-      reply.type('text/html');
-      return processingPage(req.params.id, base);
+  // ── Hosted artifacts ────────────────────────────────────────────────────────
+  // §6.6: /r/:id is now INTERNAL (session + canViewReport; used by the web app's
+  // view/preview). External recipients get capability URLs at /s/:token in Phase 8 —
+  // do not reopen /r. 404 on no-access to avoid leaking report ids.
+  const guardReportView = async (req: FastifyRequest, reply: FastifyReply): Promise<boolean> => {
+    const id = (req.params as { id: string }).id;
+    const r = await repo.getReport(id);
+    if (!r || !(await authz.canViewReport(req, r))) {
+      await reply.code(404).send({ error: 'not found' });
+      return false;
     }
-    const obj = await storage.get(storageKeys.html(req.params.id));
-    reply.type('text/html; charset=utf-8').header('cache-control', 'no-cache');
-    return reply.send(Buffer.from(obj.bytes));
-  });
+    return true;
+  };
 
-  app.get<{ Params: { id: string } }>('/r/:id.pdf', async (req, reply) => {
-    if (!(await ensureArtifacts(req.params.id))) return reply.code(425).send({ error: 'not ready' });
-    const obj = await storage.get(storageKeys.pdf(req.params.id));
-    reply
-      .type('application/pdf')
-      .header('content-disposition', `inline; filename="field-report-${req.params.id}.pdf"`)
-      .header('cache-control', 'no-cache');
-    return reply.send(Buffer.from(obj.bytes));
-  });
+  app.get<{ Params: { id: string } }>(
+    '/r/:id',
+    { preHandler: requireAuth },
+    async (req, reply) => {
+      if (!(await guardReportView(req, reply))) return reply;
+      if (!(await ensureArtifacts(req.params.id))) {
+        reply.type('text/html');
+        return processingPage(req.params.id, base);
+      }
+      const obj = await storage.get(storageKeys.html(req.params.id));
+      reply.type('text/html; charset=utf-8').header('cache-control', 'no-cache');
+      return reply.send(Buffer.from(obj.bytes));
+    },
+  );
+
+  app.get<{ Params: { id: string } }>(
+    '/r/:id.pdf',
+    { preHandler: requireAuth },
+    async (req, reply) => {
+      if (!(await guardReportView(req, reply))) return reply;
+      if (!(await ensureArtifacts(req.params.id))) return reply.code(425).send({ error: 'not ready' });
+      const obj = await storage.get(storageKeys.pdf(req.params.id));
+      reply
+        .type('application/pdf')
+        .header('content-disposition', `inline; filename="field-report-${req.params.id}.pdf"`)
+        .header('cache-control', 'no-cache');
+      return reply.send(Buffer.from(obj.bytes));
+    },
+  );
 
   // ── Media (local-disk driver serves bytes here; S3/R2 returns signed URLs) ──
+  // §6.7: rendered HTML/PDF embed photos as data-URLs, so only the admin raw-view
+  // needs these bytes — gate behind org-admin (or break-glass). Private cache: the
+  // response now varies by authorization.
   app.get('/media/*', async (req, reply) => {
+    if (!isBreakGlass(req)) {
+      if (!req.auth) return reply.code(401).send({ error: 'unauthorized' });
+      if (!(await authz.adminOrgIds(req)).length) {
+        return reply.code(403).send({ error: 'forbidden' });
+      }
+    }
     const key = (req.params as Record<string, string>)['*'];
     if (!key || !(await storage.exists(key))) return reply.code(404).send({ error: 'not found' });
     const obj = await storage.get(key);
-    reply.type(obj.contentType).header('cache-control', 'public, max-age=31536000, immutable');
+    reply.type(obj.contentType).header('cache-control', 'private, max-age=31536000, immutable');
     return reply.send(Buffer.from(obj.bytes));
   });
 
-  // ── Admin (token-gated raw-vs-polished) ────────────────────────────────────
+  // ── Admin (raw-vs-polished) ─────────────────────────────────────────────────
+  // §6.8: re-gated to org-admin sessions, scoped to the admin's orgs. The static
+  // ADMIN_TOKEN only works as an unscoped break-glass superadmin when
+  // ADMIN_BREAK_GLASS is enabled (off by default, §15.3).
   app.register(async (admin) => {
     admin.addHook('preHandler', async (req, reply) => {
-      const token = bearerToken(req);
-      if (token !== config.admin.token) return reply.code(401).send({ error: 'unauthorized' });
+      if (isBreakGlass(req)) return;
+      if (!req.auth) return reply.code(401).send({ error: 'unauthorized' });
+      if (!(await authz.adminOrgIds(req)).length) {
+        return reply.code(403).send({ error: 'forbidden' });
+      }
     });
 
-    admin.get('/api/admin/reports', async () => {
-      const reports = await repo.listReports();
+    /** Orgs this admin may see; null = unscoped break-glass. */
+    const adminScope = async (req: FastifyRequest): Promise<string[] | null> =>
+      isBreakGlass(req) ? null : authz.adminOrgIds(req);
+
+    admin.get('/api/admin/reports', async (req) => {
+      const scope = await adminScope(req);
+      const reports = scope === null ? await repo.listReports() : await repo.listReportsForOrgs(scope);
       return Promise.all(reports.map(resolveReport));
     });
 
-    // Quality + reliability rollup across all reports (KPIs: success rate, sent-unmodified
-    // rate, avg edit distance, transcription confidence). See MONITORING.md.
-    admin.get('/api/admin/metrics', async () => computeRollup(await repo.listReportQuality()));
+    // Quality + reliability rollup across the admin's orgs (KPIs: success rate,
+    // sent-unmodified rate, avg edit distance, transcription confidence). MONITORING.md.
+    admin.get('/api/admin/metrics', async (req) => {
+      const scope = await adminScope(req);
+      const quality =
+        scope === null ? await repo.listReportQuality() : await repo.listReportQualityForOrgs(scope);
+      return computeRollup(quality);
+    });
 
     admin.get<{ Params: { id: string } }>('/api/admin/reports/:id', async (req, reply) => {
       const report = await repo.getReport(req.params.id);
       if (!report) return reply.code(404).send({ error: 'not found' });
+      const scope = await adminScope(req);
+      if (scope !== null) {
+        const orgId = await repo.getReportOrgId(req.params.id);
+        if (!orgId || !scope.includes(orgId)) return reply.code(404).send({ error: 'not found' });
+      }
       const proc = await repo.getProcessingObservations(req.params.id);
       const audioByObs = new Map(proc.map((o) => [o.id, o.audioKey] as const));
 

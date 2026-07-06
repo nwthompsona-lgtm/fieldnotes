@@ -189,7 +189,22 @@ export interface Repo {
 
   // reports (scoping; authz itself is enforced in routes — §6)
   listReportsForProject(projectId: string): Promise<Report[]>;
+  /** All reports whose project belongs to one of the given orgs (admin surface). */
+  listReportsForOrgs(orgIds: string[]): Promise<Report[]>;
+  /** Report → its project's org (admin scoping). Null when unknown/unadopted. */
+  getReportOrgId(reportId: string): Promise<string | null>;
+  /** Attribution: fills created_by ONLY when currently null, so an idempotent upload
+   *  retry (or the boot backfill) can never flip a report's author. */
   setReportCreatedBy(reportId: string, userId: string): Promise<void>;
+
+  // seed / backfill (auth plan §12; all idempotent, run at boot)
+  upsertOrg(o: { id: string; name: string }): Promise<void>;
+  /** Adopt pre-tenancy projects: org_id = orgId where org_id IS NULL. */
+  adoptOrphanProjects(orgId: string): Promise<void>;
+  /** created_by = userId where created_by IS NULL. */
+  backfillReportsCreatedBy(userId: string): Promise<void>;
+  /** Quality rollup scoped to orgs (admin metrics). */
+  listReportQualityForOrgs(orgIds: string[]): Promise<ReportQuality[]>;
 
   // stakeholder directory (org level, D-8)
   listStakeholderOrgs(orgId: string): Promise<StakeholderOrg[]>; // with contacts

@@ -465,7 +465,7 @@ Legend: ⬜ todo · 🟡 in progress · ✅ done (on `develop`) · 🚀 promoted
 - ✅ **Phase 1** — Foundation: deps + config + `newId`; schema + idempotent DDL; contracts `1.2.0` (D20). 12 new tables + 2 nullable alters; verified: contracts build, typecheck, 28/28 tests, dryrun.
 - ✅ **Phase 2** — Repo methods (§3). All groups implemented in `db/{types,repo}.ts` (pure additions); `test/repo-auth.test.ts` covers CRUD per entity (23 tests, 51/51 green).
 - ✅ **Phase 3** — Auth core (passwords, sessions, `req.auth`, signup/login/logout/me) + CORS allowlist. `auth/{passwords,sessions,context,routes}.ts`; `sessions` in `ServerDeps`; routes still unguarded (Phase 4). Verified: 66/66 tests (15 new HTTP-level) + live local smoke (signup→me→logout, dup→409, bad creds→401).
-- ⬜ **Phase 4** — Pilot seed/backfill + authz + scope every existing route + reports-list  ← **milestone: app fully auth-gated; prod-promotable**
+- ✅ **Phase 4** — Pilot seed/backfill + authz + scope every existing route + reports-list  ← **milestone: app fully auth-gated; prod-promotable**. `auth/authz.ts` (§5.2, per-request cache); every route guarded per §6 incl. new `GET /api/reports?projectId` + admin re-gate (org-admin scoped; `ADMIN_BREAK_GLASS` off by default); `seedPilot` in deps.ts (§12, idempotent). 88/88 tests (16 authz-matrix + 4 seed). *Dev-staging smoke pending the Phase 0 dashboard steps; prod promotion needs prod `PILOT_SUPER_EMAIL/PASSWORD` + `CORS_ALLOWED_ORIGINS` + `SESSION_TTL_DAYS` set first.*
 - ⬜ **Phase 5** — Email driver seam (resend + mock) + templates
 - ⬜ **Phase 6** — Invitations (create + accept)
 - ⬜ **Phase 7** — Stakeholder directory + project roster + distribution defaults

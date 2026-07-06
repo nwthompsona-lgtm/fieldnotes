@@ -6,46 +6,11 @@
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import type { FastifyInstance } from 'fastify';
-import { PGlite } from '@electric-sql/pglite';
-import { drizzle } from 'drizzle-orm/pglite';
-import * as schema from '../src/db/schema.js';
-import { ensureSchema } from '../src/db/migrate.js';
-import { makeRepo } from '../src/db/repo.js';
-import { makeStorage } from '../src/storage/index.js';
-import { makeTranscriber } from '../src/stt/index.js';
-import { makeSynthesizer } from '../src/synthesis/index.js';
 import { makeSessions } from '../src/auth/sessions.js';
 import { buildApp } from '../src/app.js';
-import { config, type AppConfig } from '../src/config.js';
-import type { Db } from '../src/db/client.js';
+import { type AppConfig } from '../src/config.js';
 import type { ServerDeps } from '../src/deps.js';
-
-/** Hermetic deps: in-memory DB, local-disk storage config, forced mocks — never the
- *  real Neon/R2/API keys that may sit in .env on this machine. */
-async function buildTestDeps(overrides?: Partial<AppConfig>): Promise<ServerDeps> {
-  const cfg = {
-    ...config,
-    db: { ...config.db, url: undefined },
-    storage: { ...config.storage, driver: 'local', localDir: '.data/test-auth-storage' },
-    stt: { ...config.stt, provider: 'mock' },
-    synthesis: { ...config.synthesis, provider: 'mock' },
-    auth: { sessionTtlDays: 0 },
-    cors: { allowedOrigins: [] },
-    ...overrides,
-  } as AppConfig;
-  const db = drizzle(new PGlite(), { schema }) as unknown as Db;
-  await ensureSchema(db);
-  const repo = makeRepo(db);
-  return {
-    config: cfg,
-    db,
-    repo,
-    storage: makeStorage(cfg),
-    transcriber: makeTranscriber(cfg),
-    synthesizer: makeSynthesizer(cfg),
-    sessions: makeSessions(repo, cfg),
-  };
-}
+import { buildTestDeps } from './helpers.js';
 
 let deps: ServerDeps;
 let app: FastifyInstance;
@@ -231,15 +196,18 @@ describe('session lifetime (§4.3)', () => {
   });
 });
 
-describe('existing routes stay unguarded (guards are Phase 4)', () => {
-  it('healthz and report reads work without any session', async () => {
+describe('route guards (Phase 4)', () => {
+  it('healthz stays open; report reads need a session', async () => {
     const health = await app.inject({ method: 'GET', url: '/healthz' });
     expect(health.statusCode).toBe(200);
     expect(health.json().ok).toBe(true);
 
-    // Unknown report → 404 (not 401): the route ran, no guard intercepted.
+    // Guarded since Phase 4: anonymous report read → 401 before the handler runs.
     const report = await app.inject({ method: 'GET', url: '/api/reports/r-nope' });
-    expect(report.statusCode).toBe(404);
+    expect(report.statusCode).toBe(401);
+
+    const upload = await app.inject({ method: 'POST', url: '/api/upload' });
+    expect(upload.statusCode).toBe(401);
   });
 });
 

@@ -123,15 +123,24 @@ export const config = {
   },
 
   admin: {
-    /** Bearer token gating /api/admin/*. Generated/required for prod. */
+    /** Static bearer token. Since Phase 4, /api/admin/* is gated by org-admin sessions;
+     *  this token only works as a break-glass superadmin when ADMIN_BREAK_GLASS is on. */
     token: env.ADMIN_TOKEN ?? 'dev-admin-token',
+    /** Off by default (auth plan §15.3): enable for ops/debugging to let the static
+     *  token see ALL orgs. */
+    breakGlass: bool(env.ADMIN_BREAK_GLASS),
   },
 
-  /** The single pilot project (spec §12: single super, single project). */
+  /** Pilot bootstrap (auth plan §12): the boot seed upserts this org, creates the admin
+   *  user (email+password), adopts org-less projects, and backfills report authorship. */
   pilot: {
     projectId: env.PILOT_PROJECT_ID ?? 'pilot-project',
     projectName: env.PILOT_PROJECT_NAME ?? 'Watson Island',
     superName: env.PILOT_SUPER_NAME ?? 'Pilot Super',
+    orgId: env.PILOT_ORG_ID ?? 'org_pilot',
+    orgName: env.PILOT_ORG_NAME ?? 'Watson Builders',
+    superEmail: env.PILOT_SUPER_EMAIL,
+    superPassword: env.PILOT_SUPER_PASSWORD,
   },
 } as const;
 
