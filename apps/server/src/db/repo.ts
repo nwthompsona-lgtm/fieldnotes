@@ -81,19 +81,26 @@ const mapStakeholderOrgs = (
 };
 
 export function makeRepo(db: Db): Repo {
-  async function assembleReport(id: string): Promise<Report | null> {
-    const r = (await db.select().from(reports).where(eq(reports.id, id)).limit(1))[0];
-    if (!r) return null;
-    const proj = (
-      await db.select({ name: projects.name }).from(projects).where(eq(projects.id, r.projectId)).limit(1)
-    )[0];
+  /** Batched report assembly: 4 queries TOTAL for any number of reports (reports,
+   *  project names, observations, photos), preserving the caller's id order. The
+   *  single-get and both list methods all flow through here so the mapping never forks. */
+  async function assembleReportsBatch(reportIds: string[]): Promise<Report[]> {
+    if (!reportIds.length) return [];
+    const rRows = await db.select().from(reports).where(inArray(reports.id, reportIds));
+    if (!rRows.length) return [];
+
+    const projIds = [...new Set(rRows.map((r) => r.projectId))];
+    const projRows = await db
+      .select({ id: projects.id, name: projects.name })
+      .from(projects)
+      .where(inArray(projects.id, projIds));
+    const projName = new Map(projRows.map((p) => [p.id, p.name]));
 
     const obsRows = await db
       .select()
       .from(observations)
-      .where(eq(observations.reportId, id))
+      .where(inArray(observations.reportId, reportIds))
       .orderBy(asc(observations.ord));
-
     const obsIds = obsRows.map((o) => o.id);
     const photoRows = obsIds.length
       ? await db.select().from(photos).where(inArray(photos.observationId, obsIds)).orderBy(asc(photos.ord))
@@ -105,41 +112,55 @@ export function makeRepo(db: Db): Repo {
       list.push(p);
       photosByObs.set(p.observationId, list);
     }
+    const obsByReport = new Map<string, typeof obsRows>();
+    for (const o of obsRows) {
+      const list = obsByReport.get(o.reportId) ?? [];
+      list.push(o);
+      obsByReport.set(o.reportId, list);
+    }
 
-    const obs = obsRows.map((o) => ({
-      id: o.id,
-      order: o.ord,
-      createdAt: iso(o.createdAt),
-      photos: (photosByObs.get(o.id) ?? []).map((p) => ({
-        id: p.id,
-        blobRef: p.storageKey,
-        width: p.width,
-        height: p.height,
-        byteSize: p.byteSize ?? undefined,
-      })),
-      annotations: o.annotations ?? undefined,
-      audioRef: o.audioKey ?? '',
-      transcript: o.transcript ?? undefined,
-      cleanedDescription: o.cleanedDescription ?? undefined,
-      trade: o.trade ?? undefined,
-      area: o.area ?? undefined,
-    }));
+    const byId = new Map<string, Report>(
+      rRows.map((r) => [
+        r.id,
+        {
+          id: r.id,
+          projectId: r.projectId,
+          projectName: projName.get(r.projectId) ?? undefined,
+          date: r.date,
+          superName: r.superName,
+          summary: r.summary,
+          observations: (obsByReport.get(r.id) ?? []).map((o) => ({
+            id: o.id,
+            order: o.ord,
+            createdAt: iso(o.createdAt),
+            photos: (photosByObs.get(o.id) ?? []).map((p) => ({
+              id: p.id,
+              blobRef: p.storageKey,
+              width: p.width,
+              height: p.height,
+              byteSize: p.byteSize ?? undefined,
+            })),
+            annotations: o.annotations ?? undefined,
+            audioRef: o.audioKey ?? '',
+            transcript: o.transcript ?? undefined,
+            cleanedDescription: o.cleanedDescription ?? undefined,
+            trade: o.trade ?? undefined,
+            area: o.area ?? undefined,
+          })),
+          status: r.status,
+          processing: r.processing,
+          processingError: r.processingError ?? undefined,
+          createdBy: r.createdBy ?? undefined,
+          createdAt: iso(r.createdAt),
+          updatedAt: iso(r.updatedAt),
+        } satisfies Report,
+      ]),
+    );
+    return reportIds.map((id) => byId.get(id)).filter((r): r is Report => r != null);
+  }
 
-    return {
-      id: r.id,
-      projectId: r.projectId,
-      projectName: proj?.name ?? undefined,
-      date: r.date,
-      superName: r.superName,
-      summary: r.summary,
-      observations: obs,
-      status: r.status,
-      processing: r.processing,
-      processingError: r.processingError ?? undefined,
-      createdBy: r.createdBy ?? undefined,
-      createdAt: iso(r.createdAt),
-      updatedAt: iso(r.updatedAt),
-    };
+  async function assembleReport(id: string): Promise<Report | null> {
+    return (await assembleReportsBatch([id]))[0] ?? null;
   }
 
   return {
@@ -150,6 +171,10 @@ export function makeRepo(db: Db): Repo {
     },
 
     async upsertProject(p: Project) {
+      // NOTE: deliberately does NOT write orgId/visibility even though Project now
+      // carries them — the org-less boot seed calls this every start and would clobber
+      // the Phase 4 org adoption on conflict. Tenancy writes go through createProject /
+      // setProjectVisibility / the seed backfill; passing orgId/visibility here is a no-op.
       await db
         .insert(projects)
         .values({
@@ -251,12 +276,7 @@ export function makeRepo(db: Db): Repo {
 
     async listReports() {
       const rows = await db.select({ id: reports.id }).from(reports).orderBy(desc(reports.createdAt));
-      const out: Report[] = [];
-      for (const row of rows) {
-        const r = await assembleReport(row.id);
-        if (r) out.push(r);
-      }
-      return out;
+      return assembleReportsBatch(rows.map((r) => r.id));
     },
 
     async getProcessingObservations(reportId): Promise<ProcessingObservation[]> {
@@ -471,6 +491,24 @@ export function makeRepo(db: Db): Repo {
         email: normEmail(u.email),
         name: u.name,
         passwordHash: u.passwordHash ?? null,
+      });
+    },
+
+    async createUserWithOrg({ user, org, membership }) {
+      await db.transaction(async (tx) => {
+        await tx.insert(users).values({
+          id: user.id,
+          email: normEmail(user.email),
+          name: user.name,
+          passwordHash: user.passwordHash,
+        });
+        await tx.insert(orgs).values({ id: org.id, name: org.name });
+        await tx.insert(memberships).values({
+          id: membership.id,
+          userId: user.id,
+          orgId: org.id,
+          orgRole: membership.orgRole,
+        });
       });
     },
 
@@ -744,12 +782,7 @@ export function makeRepo(db: Db): Repo {
         .from(reports)
         .where(eq(reports.projectId, projectId))
         .orderBy(desc(reports.createdAt));
-      const out: Report[] = [];
-      for (const row of rows) {
-        const r = await assembleReport(row.id);
-        if (r) out.push(r);
-      }
-      return out;
+      return assembleReportsBatch(rows.map((r) => r.id));
     },
 
     async setReportCreatedBy(reportId, userId) {
@@ -866,11 +899,14 @@ export function makeRepo(db: Db): Repo {
     },
 
     async setProjectStakeholders(projectId, stakeholderOrgIds) {
+      // Set semantics for real: dedupe the input, or a repeated id from an unvalidated
+      // client array violates project_stakeholders_uq and aborts the whole transaction.
+      const unique = [...new Set(stakeholderOrgIds)];
       await db.transaction(async (tx) => {
         await tx.delete(projectStakeholders).where(eq(projectStakeholders.projectId, projectId));
-        if (stakeholderOrgIds.length) {
+        if (unique.length) {
           await tx.insert(projectStakeholders).values(
-            stakeholderOrgIds.map((soId) => ({
+            unique.map((soId) => ({
               id: newId('psk'),
               projectId,
               stakeholderOrgId: soId,

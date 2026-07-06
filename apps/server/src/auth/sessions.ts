@@ -17,11 +17,20 @@ export interface SessionManager {
 }
 
 const TOUCH_INTERVAL_MS = 5 * 60_000;
+/** Above this, stale touch-throttle entries get swept. Entries older than the touch
+ *  interval are safe to drop — the worst case is one extra last_seen write. */
+const TOUCH_MAP_SWEEP_SIZE = 10_000;
 
 export function makeSessions(repo: Repo, config: AppConfig): SessionManager {
   // In-memory throttle for last_seen_at writes. Per-process is fine: it's an
   // optimization, not correctness — a restart just means one extra write per session.
   const lastTouched = new Map<string, number>();
+
+  const sweepIfLarge = () => {
+    if (lastTouched.size <= TOUCH_MAP_SWEEP_SIZE) return;
+    const cutoff = Date.now() - TOUCH_INTERVAL_MS;
+    for (const [tok, at] of lastTouched) if (at < cutoff) lastTouched.delete(tok);
+  };
 
   return {
     async issue(userId) {
@@ -35,12 +44,17 @@ export function makeSessions(repo: Repo, config: AppConfig): SessionManager {
     async resolve(token) {
       if (!token) return null;
       const s = await repo.getSession(token);
-      if (!s) return null;
-      if (s.revokedAt) return null;
-      if (s.expiresAt && s.expiresAt.getTime() < Date.now()) return null;
+      // Dead tokens (unknown / revoked out-of-band / expired) also evict their throttle
+      // entry so the Map tracks only live sessions instead of leaking one per token ever
+      // resolved for the life of the process.
+      if (!s || s.revokedAt || (s.expiresAt && s.expiresAt.getTime() < Date.now())) {
+        lastTouched.delete(token);
+        return null;
+      }
       const last = lastTouched.get(token) ?? 0;
       if (Date.now() - last > TOUCH_INTERVAL_MS) {
         lastTouched.set(token, Date.now());
+        sweepIfLarge();
         await repo.touchSession(token);
       }
       return s.userId;

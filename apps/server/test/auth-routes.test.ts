@@ -99,6 +99,15 @@ describe('POST /api/auth/signup', () => {
     });
     expect(res.statusCode).toBe(400);
   });
+
+  it('rejects an oversized password with 400 before any argon2 work (DoS bound)', async () => {
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/auth/signup',
+      payload: { ...signupBody, email: 'big@example.com', password: 'A'.repeat(100_000) },
+    });
+    expect(res.statusCode).toBe(400);
+  });
 });
 
 describe('POST /api/auth/login', () => {

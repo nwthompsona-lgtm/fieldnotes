@@ -14,6 +14,10 @@ export async function buildApp(deps: ServerDeps): Promise<FastifyInstance> {
   const app = Fastify({
     logger: { level: process.env.LOG_LEVEL ?? 'info' },
     bodyLimit: 8 * 1024 * 1024, // JSON bodies (edits) only; media goes via multipart
+    /** The server always sits behind a proxy in deployment (Render). Without this,
+     *  req.ip is the proxy hop for every client, which collapses the per-IP auth
+     *  throttle into one shared bucket — 30 logins/5min for the whole userbase. */
+    trustProxy: true,
   });
 
   // No credentials mode needed: auth is a bearer header, not cookies (T-1).

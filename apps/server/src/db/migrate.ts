@@ -64,8 +64,9 @@ CREATE TABLE IF NOT EXISTS photos (
 CREATE INDEX IF NOT EXISTS photos_observation_idx ON photos (observation_id);
 
 -- Auth + multi-tenancy + distribution (AUTH_MULTITENANCY_PLAN.md §1). Additive +
--- idempotent: safe against a prod-shaped DB. orgs/users first (FK targets). The two
--- ALTERs on existing tables stay nullable + FK-free — backfill/enforcement is Phase 4.
+-- idempotent: safe against a prod-shaped DB. orgs/users first (FK targets). The four
+-- ALTERs on existing tables at the bottom stay FK-free; the two backfill targets
+-- (projects.org_id, reports.created_by) stay nullable — backfill/enforcement is Phase 4.
 CREATE TABLE IF NOT EXISTS orgs (
   id text PRIMARY KEY,
   name text NOT NULL,
@@ -180,7 +181,13 @@ ALTER TABLE reports ADD COLUMN IF NOT EXISTS created_by text;
 `;
 
 export async function ensureSchema(db: Db): Promise<void> {
-  for (const stmt of DDL.split(';')) {
+  // Strip `--` line comments BEFORE splitting on ';' — a future ';' inside a comment
+  // must not shear a statement in half and fail the boot. (String literals in this DDL
+  // never contain ';'; keep it that way.)
+  const withoutComments = DDL.split('\n')
+    .filter((line) => !line.trim().startsWith('--'))
+    .join('\n');
+  for (const stmt of withoutComments.split(';')) {
     const s = stmt.trim();
     if (s) await db.execute(sql.raw(s));
   }

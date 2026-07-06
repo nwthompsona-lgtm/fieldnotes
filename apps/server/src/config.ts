@@ -10,6 +10,18 @@ function bool(v: string | undefined, dflt = false): boolean {
   return ['1', 'true', 'yes', 'on'].includes(v.toLowerCase());
 }
 
+/** Parse a non-negative number env, failing CLOSED: a malformed value (e.g. "30d")
+ *  throws at boot instead of silently degrading (NaN > 0 is false, which would have
+ *  turned a configured session TTL into "never expires"). */
+function nonNegativeNumber(name: string, v: string | undefined, dflt: number): number {
+  if (v == null || v.trim() === '') return dflt;
+  const n = Number(v);
+  if (!Number.isFinite(n) || n < 0) {
+    throw new Error(`${name} must be a non-negative number, got ${JSON.stringify(v)}`);
+  }
+  return n;
+}
+
 const env = process.env;
 
 /** Force embedded pglite + local-disk storage even when prod DATABASE_URL/S3_BUCKET are
@@ -77,8 +89,9 @@ export const config = {
   },
 
   auth: {
-    /** Session lifetime in days; 0 = indefinite (`expires_at = null`, revoke-only) per D-2. */
-    sessionTtlDays: Number(env.SESSION_TTL_DAYS ?? 0),
+    /** Session lifetime in days; 0 = indefinite (`expires_at = null`, revoke-only) per D-2.
+     *  Malformed values throw at boot rather than silently meaning "never expires". */
+    sessionTtlDays: nonNegativeNumber('SESSION_TTL_DAYS', env.SESSION_TTL_DAYS, 0),
   },
 
   email: {
@@ -98,11 +111,14 @@ export const config = {
 
   cors: {
     /** Allowlist of SPA origins (capture + web), comma-separated in CORS_ALLOWED_ORIGINS.
-     *  Empty => permissive `origin:true` for local dev. Parsed here in Phase 0; the actual
-     *  @fastify/cors swap (allowlist when set, else origin:true) lands in Phase 3 (auth core). */
+     *  Empty => permissive `origin:true` for local dev; when set, app.ts feeds it to
+     *  @fastify/cors, which compares against the browser's Origin header with exact ===.
+     *  So normalize what browsers actually send: strip trailing slashes (an Origin header
+     *  never has one) and lowercase (scheme+host are case-insensitive). A stray slash in
+     *  the env var must not silently break every capture upload. */
     allowedOrigins: (env.CORS_ALLOWED_ORIGINS ?? '')
       .split(',')
-      .map((s) => s.trim())
+      .map((s) => s.trim().replace(/\/+$/, '').toLowerCase())
       .filter(Boolean),
   },
 

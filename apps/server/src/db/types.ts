@@ -120,6 +120,13 @@ export interface Repo {
 
   // identity (emails normalized lowercase at this layer; unique on lower(email))
   createUser(u: { id: string; email: string; name: string; passwordHash?: string }): Promise<void>;
+  /** Signup: user + their org + admin membership in ONE transaction, so a mid-sequence
+   *  failure can't strand an org-less account whose email is then permanently 409-blocked. */
+  createUserWithOrg(args: {
+    user: { id: string; email: string; name: string; passwordHash: string };
+    org: { id: string; name: string };
+    membership: { id: string; orgRole: OrgRole };
+  }): Promise<void>;
   getUserByEmail(email: string): Promise<UserRow | null>;
   getUserById(id: string): Promise<UserRow | null>;
   setUserPassword(id: string, passwordHash: string): Promise<void>;

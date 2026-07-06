@@ -158,6 +158,11 @@ identity (`PublicUser` — never carries a password hash — `Org`, `Membership`
 `AuthResponse`, `Me`), stakeholder directory (`StakeholderOrg`, `StakeholderContact`),
 and send/delivery (`SendSelection`, `SendRequest`, `Recipient`, `ReportSend`). The
 capture↔server `UploadManifest` seam is untouched, so v1.1.0 capture clients still upload.
+- *Amended (same day, pre-release of 1.2.0 — no version bump):* auth DTO strings gained
+  upper bounds (email ≤254, password ≤128, name/orgName ≤200; `expiresInDays` ≤365,
+  `message` ≤2000) after the Phase 1–3 code review flagged unbounded inputs (argon2 DoS,
+  btree index-row overflow, Date overflow). Send/delivery timestamps tightened from bare
+  strings to `Iso8601`. No consumer of these shapes existed yet.
 
 ## Assumptions (revisit if wrong)
 

@@ -17,6 +17,7 @@ import { storageKeys } from './storage/types.js';
 import { reportQualityMetrics, computeRollup } from './quality.js';
 import { recordRunFeedback } from './observability.js';
 import { registerAuthRoutes } from './auth/routes.js';
+import { bearerToken } from './auth/context.js';
 
 export function registerRoutes(app: FastifyInstance, deps: ServerDeps): void {
   const { repo, storage, config } = deps;
@@ -227,8 +228,7 @@ export function registerRoutes(app: FastifyInstance, deps: ServerDeps): void {
   // ── Admin (token-gated raw-vs-polished) ────────────────────────────────────
   app.register(async (admin) => {
     admin.addHook('preHandler', async (req, reply) => {
-      const auth = req.headers.authorization ?? '';
-      const token = auth.replace(/^Bearer\s+/i, '');
+      const token = bearerToken(req);
       if (token !== config.admin.token) return reply.code(401).send({ error: 'unauthorized' });
     });
 

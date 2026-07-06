@@ -23,6 +23,27 @@ beforeAll(async () => {
 });
 
 describe('identity (users)', () => {
+  it('createUserWithOrg is transactional: a duplicate email rolls back org + membership', async () => {
+    await repo.createUserWithOrg({
+      user: { id: 'usr_tx', email: 'tx@example.com', name: 'Tx One', passwordHash: 'h' },
+      org: { id: 'org_tx', name: 'Tx Org' },
+      membership: { id: 'mem_tx', orgRole: 'admin' },
+    });
+    expect(await repo.getOrg('org_tx')).toEqual({ id: 'org_tx', name: 'Tx Org' });
+    expect(await repo.getMembership('usr_tx', 'org_tx')).toEqual({ orgRole: 'admin' });
+
+    // Failure AFTER the user insert (duplicate org PK) must roll the user back too —
+    // this is the exact "orphaned org-less account" scenario the transaction prevents.
+    await expect(
+      repo.createUserWithOrg({
+        user: { id: 'usr_tx2', email: 'tx2@example.com', name: 'Tx Two', passwordHash: 'h' },
+        org: { id: 'org_tx', name: 'Duplicate Org PK' },
+        membership: { id: 'mem_tx2', orgRole: 'admin' },
+      }),
+    ).rejects.toThrow();
+    expect(await repo.getUserByEmail('tx2@example.com')).toBeNull(); // rolled back
+  });
+
   it('creates and reads a user by id and by email (case/space-insensitive)', async () => {
     await repo.createUser({ id: 'usr_1', email: 'Jake@Example.com ', name: 'Jake Romero' });
     const byId = await repo.getUserById('usr_1');
@@ -273,7 +294,7 @@ describe('stakeholder directory + roster + distribution default', () => {
     expect(await repo.getContactsByIds([])).toEqual([]);
   });
 
-  it('roster set/get is wholesale-replace', async () => {
+  it('roster set/get is wholesale-replace and dedupes input', async () => {
     await repo.setProjectStakeholders('proj_a', ['sko_1', 'sko_2']);
     expect((await repo.listProjectStakeholders('proj_a')).map((o) => o.id).sort()).toEqual([
       'sko_1',
@@ -281,7 +302,12 @@ describe('stakeholder directory + roster + distribution default', () => {
     ]);
     await repo.setProjectStakeholders('proj_a', ['sko_1']);
     expect((await repo.listProjectStakeholders('proj_a')).map((o) => o.id)).toEqual(['sko_1']);
-    await repo.setProjectStakeholders('proj_a', ['sko_1', 'sko_2']); // used by the send test
+    // A repeated id from an unvalidated client array must not abort on the unique index.
+    await repo.setProjectStakeholders('proj_a', ['sko_1', 'sko_1', 'sko_2']);
+    expect((await repo.listProjectStakeholders('proj_a')).map((o) => o.id).sort()).toEqual([
+      'sko_1',
+      'sko_2',
+    ]);
   });
 
   it('distribution default upserts', async () => {

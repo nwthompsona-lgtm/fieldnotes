@@ -311,24 +311,28 @@ export type ProjectMember = z.infer<typeof ProjectMember>;
 
 // Auth DTOs (plan §4.2).
 
+// Upper bounds matter: without .max(), an 8MB password gets argon2id-hashed per
+// attempt (cheap DoS) and an oversized email overflows the btree unique-index row
+// limit. 254 = RFC 5321 address ceiling; 128 is generous for passphrases.
+
 export const SignupRequest = z.object({
-  email: z.string().email(),
-  password: z.string().min(8),
-  name: z.string().min(1),
-  orgName: z.string().min(1),
+  email: z.string().email().max(254),
+  password: z.string().min(8).max(128),
+  name: z.string().min(1).max(200),
+  orgName: z.string().min(1).max(200),
 });
 export type SignupRequest = z.infer<typeof SignupRequest>;
 
 export const LoginRequest = z.object({
-  email: z.string().email(),
-  password: z.string().min(1),
+  email: z.string().email().max(254),
+  password: z.string().min(1).max(128),
 });
 export type LoginRequest = z.infer<typeof LoginRequest>;
 
 export const AcceptInviteRequest = z.object({
-  token: z.string(),
-  name: z.string().min(1),
-  password: z.string().min(8),
+  token: z.string().max(128),
+  name: z.string().min(1).max(200),
+  password: z.string().min(8).max(128),
 });
 export type AcceptInviteRequest = z.infer<typeof AcceptInviteRequest>;
 
@@ -378,9 +382,10 @@ export type SendSelection = z.infer<typeof SendSelection>;
 
 export const SendRequest = z.object({
   selection: SendSelection,
-  message: z.string().optional(),
-  /** Per-person link lifetime (D-9: 30d default, revocable). */
-  expiresInDays: z.number().int().positive().default(30),
+  message: z.string().max(2000).optional(),
+  /** Per-person link lifetime (D-9: 30d default, revocable). Capped at a year — an
+   *  unbounded value overflows the JS Date range when expires_at is computed. */
+  expiresInDays: z.number().int().positive().max(365).default(30),
 });
 export type SendRequest = z.infer<typeof SendRequest>;
 
@@ -390,9 +395,9 @@ export const Recipient = z.object({
   email: z.string(),
   /** Stakeholder org display name, when the recipient came from the directory. */
   org: z.string().optional(),
-  sentAt: z.string(),
-  firstOpenedAt: z.string().optional(),
-  revokedAt: z.string().optional(),
+  sentAt: Iso8601,
+  firstOpenedAt: Iso8601.optional(),
+  revokedAt: Iso8601.optional(),
   openCount: z.number().int(),
 });
 export type Recipient = z.infer<typeof Recipient>;
@@ -401,7 +406,7 @@ export const ReportSend = z.object({
   id: z.string(),
   reportId: z.string(),
   sentBy: PublicUser,
-  sentAt: z.string(),
+  sentAt: Iso8601,
   recipients: z.array(Recipient),
 });
 export type ReportSend = z.infer<typeof ReportSend>;
