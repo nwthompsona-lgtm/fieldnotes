@@ -22,7 +22,8 @@ const MAX_ATTEMPTS = 30;
 const BUCKETS_SWEEP_SIZE = 10_000;
 const buckets = new Map<string, { count: number; resetAt: number }>();
 
-async function throttle(req: FastifyRequest, reply: FastifyReply): Promise<void> {
+/** Shared by the invitation routes (§4.2 rate-limits signup/login/accept alike). */
+export async function throttle(req: FastifyRequest, reply: FastifyReply): Promise<void> {
   const key = `${req.ip}:${req.routeOptions.url ?? req.url}`;
   const now = Date.now();
   const b = buckets.get(key);

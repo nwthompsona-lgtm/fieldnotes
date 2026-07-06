@@ -532,6 +532,15 @@ export function makeRepo(db: Db): Repo {
       await db.update(users).set({ passwordHash }).where(eq(users.id, id));
     },
 
+    async updateUser(id, patch) {
+      const set: Partial<{ name: string; passwordHash: string }> = {};
+      if (patch.name !== undefined) set.name = patch.name;
+      if (patch.passwordHash !== undefined) set.passwordHash = patch.passwordHash;
+      if (Object.keys(set).length) {
+        await db.update(users).set(set).where(eq(users.id, id));
+      }
+    },
+
     // sessions
 
     async createSession(s) {

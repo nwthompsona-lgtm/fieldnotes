@@ -14,11 +14,15 @@ import { makeTranscriber } from '../src/stt/index.js';
 import { makeSynthesizer } from '../src/synthesis/index.js';
 import { makeSessions } from '../src/auth/sessions.js';
 import { makeMockEmail } from '../src/email/index.js';
+import type { MockEmailDriver } from '../src/email/mock.js';
 import { config, type AppConfig } from '../src/config.js';
 import type { Db } from '../src/db/client.js';
 import type { ServerDeps } from '../src/deps.js';
 
-export async function buildTestDeps(overrides?: Partial<AppConfig>): Promise<ServerDeps> {
+/** ServerDeps with the email driver narrowed to the mock (exposes `.sent`). */
+export type TestDeps = ServerDeps & { email: MockEmailDriver };
+
+export async function buildTestDeps(overrides?: Partial<AppConfig>): Promise<TestDeps> {
   const cfg = {
     ...config,
     db: { ...config.db, url: undefined },

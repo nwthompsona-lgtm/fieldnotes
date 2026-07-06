@@ -130,6 +130,8 @@ export interface Repo {
   getUserByEmail(email: string): Promise<UserRow | null>;
   getUserById(id: string): Promise<UserRow | null>;
   setUserPassword(id: string, passwordHash: string): Promise<void>;
+  /** Partial update (invite-accept sets name + first password on a pending user). */
+  updateUser(id: string, patch: { name?: string; passwordHash?: string }): Promise<void>;
 
   // sessions (id = the opaque bearer token; expiresAt null = indefinite, D-2)
   createSession(s: { id: string; userId: string; expiresAt: Date | null }): Promise<void>;
