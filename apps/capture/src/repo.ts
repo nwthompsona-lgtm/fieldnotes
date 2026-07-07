@@ -8,8 +8,8 @@ import { localDateYmd } from './lib/format';
 import type { CompressedImage } from './lib/image';
 
 /** Get the active capturing walk, creating one if none exists. Project + preparer are
- *  intentionally blank: the user fills them in (required) on the Review & Sync screen,
- *  so nothing is ever attributed to a guessed default. */
+ *  intentionally blank here: the Review & Sync screen stamps them from the picked
+ *  project + the logged-in account (F3), so nothing is attributed to a guessed default. */
 export async function getOrCreateActiveWalk(): Promise<WalkRow> {
   const existing = await db.walks.where('status').equals('capturing').first();
   if (existing) return existing;
@@ -26,8 +26,9 @@ export async function getOrCreateActiveWalk(): Promise<WalkRow> {
   return walk;
 }
 
-/** Persist the report details the user enters on the Review screen onto the walk row,
- *  so a refresh/crash before Sync never loses them and Sync reads them from the store. */
+/** Persist the report details (picked project + account name, stamped by the Review
+ *  screen) onto the walk row, so a refresh/crash before Sync never loses them and Sync
+ *  reads them from the store. */
 export async function setWalkDetails(
   walkId: string,
   details: { projectId: string; projectName: string; superName: string },

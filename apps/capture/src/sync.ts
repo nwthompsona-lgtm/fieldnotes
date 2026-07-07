@@ -22,6 +22,7 @@ import { db } from './db';
 import { UPLOAD_URL } from './config';
 import { getObservationsForWalk, getPhotosForObs, getAudioForObs, clearAckedObservations } from './repo';
 import { isStandalone } from './lib/install';
+import { authHeaders, clearSession } from './lib/session';
 
 export interface SyncProgress {
   /** Per-observation upload state (built before the request fires). */
@@ -39,6 +40,17 @@ const MAX_ATTEMPTS = 4;
 const BASE_DELAY_MS = 1500;
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+/** Upload failure with the HTTP status attached (0 = network), so the retry loop can
+ *  tell transient faults (retry) from auth/permission verdicts (stop immediately). */
+export class UploadError extends Error {
+  constructor(
+    public status: number,
+    message: string,
+  ) {
+    super(message);
+  }
+}
 
 /** Assemble the FormData body for a walk straight from the durable store. */
 async function buildUploadBody(walkId: string): Promise<{ form: FormData; obsCount: number }> {
@@ -116,6 +128,8 @@ function postWithProgress(
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest();
     xhr.open('POST', url, true);
+    // §6.1: the upload is authenticated — the session bearer rides on the XHR.
+    for (const [k, v] of Object.entries(authHeaders())) xhr.setRequestHeader(k, v);
     xhr.upload.onprogress = (e) => {
       if (e.lengthComputable) onFraction(e.loaded / e.total);
     };
@@ -125,14 +139,18 @@ function postWithProgress(
           const parsed = UploadResult.parse(JSON.parse(xhr.responseText));
           resolve(parsed);
         } catch (err) {
-          reject(new Error(`Server response was not a valid UploadResult: ${(err as Error).message}`));
+          reject(new UploadError(xhr.status, `Server response was not a valid UploadResult: ${(err as Error).message}`));
         }
+      } else if (xhr.status === 401) {
+        reject(new UploadError(401, 'Your session has expired — log in again to sync. Nothing was lost.'));
+      } else if (xhr.status === 403) {
+        reject(new UploadError(403, "You don't have capture access to this project anymore — pick another project or ask your PM. Nothing was lost."));
       } else {
-        reject(new Error(`Upload failed (HTTP ${xhr.status}). ${xhr.responseText?.slice(0, 200) ?? ''}`));
+        reject(new UploadError(xhr.status, `Upload failed (HTTP ${xhr.status}). ${xhr.responseText?.slice(0, 200) ?? ''}`));
       }
     };
-    xhr.onerror = () => reject(new Error('Network error during upload.'));
-    xhr.ontimeout = () => reject(new Error('Upload timed out.'));
+    xhr.onerror = () => reject(new UploadError(0, 'Network error during upload.'));
+    xhr.ontimeout = () => reject(new UploadError(0, 'Upload timed out.'));
     xhr.timeout = 120_000;
     xhr.send(form);
   });
@@ -162,6 +180,12 @@ export async function syncWalk(walkId: string, onProgress: ProgressCb): Promise<
       return result;
     } catch (err) {
       lastErr = err instanceof Error ? err : new Error(String(err));
+      // Auth verdicts are not transient — stop retrying. A 401 also clears the session
+      // so the app falls back to the login screen; the walk stays pending in IndexedDB.
+      if (err instanceof UploadError && (err.status === 401 || err.status === 403)) {
+        if (err.status === 401) clearSession();
+        break;
+      }
       if (attempt < MAX_ATTEMPTS) {
         const delay = BASE_DELAY_MS * 2 ** (attempt - 1);
         onProgress({

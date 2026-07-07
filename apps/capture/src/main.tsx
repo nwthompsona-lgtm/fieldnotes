@@ -2,15 +2,13 @@ import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { registerSW } from 'virtual:pwa-register';
 import { App } from './App';
-// Self-hosted fonts (bundled + precached for offline). Display = Space Grotesk,
-// body/UI = IBM Plex Sans — matching the design tokens.
-import '@fontsource/space-grotesk/latin-500.css';
-import '@fontsource/space-grotesk/latin-600.css';
-import '@fontsource/space-grotesk/latin-700.css';
-import '@fontsource/ibm-plex-sans/latin-400.css';
-import '@fontsource/ibm-plex-sans/latin-500.css';
-import '@fontsource/ibm-plex-sans/latin-600.css';
-import '@fontsource/ibm-plex-sans/latin-700.css';
+// Self-hosted fonts (bundled + precached for offline). One family for display + body —
+// Plus Jakarta Sans, matching the Flux design tokens.
+import '@fontsource/plus-jakarta-sans/latin-400.css';
+import '@fontsource/plus-jakarta-sans/latin-500.css';
+import '@fontsource/plus-jakarta-sans/latin-600.css';
+import '@fontsource/plus-jakarta-sans/latin-700.css';
+import '@fontsource/plus-jakarta-sans/latin-800.css';
 import './styles.css';
 import { initTheme } from './lib/theme';
 

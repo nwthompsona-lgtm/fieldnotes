@@ -5,6 +5,8 @@ import { CaptureFlow } from './components/CaptureFlow';
 import { HomeScreen } from './components/HomeScreen';
 import { ReviewScreen } from './components/ReviewScreen';
 import { ReportScreen } from './components/ReportScreen';
+import { LoginScreen } from './components/LoginScreen';
+import { ProjectPickerScreen } from './components/ProjectPickerScreen';
 import {
   finishWalk,
   getObservationsForWalk,
@@ -14,6 +16,9 @@ import {
 } from './repo';
 import { useOnline } from './hooks/useOnline';
 import { useTheme } from './hooks/useTheme';
+import { useSessionToken, useActiveProject } from './hooks/useWorkspace';
+import { me } from './lib/authApi';
+import { setAccount } from './lib/session';
 
 type Screen = 'home' | 'capture' | 'review' | 'report';
 
@@ -24,6 +29,11 @@ export function App() {
   // Onboarding gate (spec §2). DEV escape hatch only.
   const [installed, setInstalled] = useState<boolean>(isStandalone());
   const [devBypass, setDevBypass] = useState(false);
+
+  // Auth + project gates (Phase 11 / F3): session bearer → picked project → capture.
+  const sessionToken = useSessionToken();
+  const activeProject = useActiveProject();
+  const [repicking, setRepicking] = useState(false);
 
   const [walkId, setWalkId] = useState<string | null>(null);
   const [pendingWalkId, setPendingWalkId] = useState<string | null>(null);
@@ -57,6 +67,18 @@ export function App() {
       setWalkId(active.id);
     })();
   }, [gateOpen]);
+
+  // Session hygiene: when online with a stored token, refresh the cached account (name
+  // changes, and a revoked/expired session surfaces as a 401, which clears the token and
+  // drops the app back to login). Offline, the cached account keeps the app usable.
+  useEffect(() => {
+    if (!sessionToken || !online) return;
+    me()
+      .then((who) => setAccount(who.user))
+      .catch(() => {
+        /* 401 already cleared the session; network blips change nothing */
+      });
+  }, [sessionToken, online]);
 
   const refreshTotals = useCallback(async (id: string) => {
     const obs = await getObservationsForWalk(id);
@@ -110,6 +132,23 @@ export function App() {
     );
   }
 
+  // Login gate: no session bearer → log in (capture data in IndexedDB is untouched, so
+  // a mid-walk logout/401 loses nothing; sync resumes after the next login).
+  if (!sessionToken) {
+    return <LoginScreen onLoggedIn={() => setRepicking(false)} />;
+  }
+
+  // Project gate: capture always attributes to a picked project (replaces free text).
+  if (!activeProject || repicking) {
+    return (
+      <ProjectPickerScreen
+        online={online}
+        onPicked={() => setRepicking(false)}
+        onBack={activeProject && repicking ? () => setRepicking(false) : undefined}
+      />
+    );
+  }
+
   if (screen === 'capture' && walkId) {
     return (
       <CaptureFlow
@@ -152,6 +191,8 @@ export function App() {
       onToggleTheme={toggleTheme}
       refreshKey={refreshKey}
       pendingWalkId={pendingWalkId}
+      projectName={activeProject.projectName}
+      onSwitchProject={() => setRepicking(true)}
       onNewObservation={() => setScreen('capture')}
       onDone={handleFinishWalk}
       onOpenPending={() => setScreen('review')}

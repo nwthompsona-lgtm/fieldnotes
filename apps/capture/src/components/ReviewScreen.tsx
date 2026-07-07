@@ -1,23 +1,15 @@
-import { useEffect, useId, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Icon } from './Icon';
 import { PhotoThumb } from './PhotoThumb';
 import { db } from '../db';
 import { getObservationsForWalk, getWalk, setWalkDetails } from '../repo';
 import { syncWalk } from '../sync';
 import { recordSubmittedReport } from '../lib/reports';
-import {
-  getPreparerName,
-  getRecentProjects,
-  projectIdForName,
-  recordProject,
-  setPreparerName,
-} from '../lib/profile';
+import { getAccount } from '../lib/session';
+import { getActiveProject, recordCapture } from '../lib/activeProject';
 import { formatBytes, formatLongDate } from '../lib/format';
 import { walkByteSize } from '../repo';
 import { getReportStatus } from '../lib/api';
-
-// The OLD build baked this placeholder; treat it as "unset" so the user is asked.
-const STALE_NAME = 'Pilot Super';
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -57,18 +49,21 @@ interface Props {
   onNewWalk: () => void;
 }
 
-/** Review & sync: confirm walk metadata (required name + project), upload with live
- *  progress, then hand off to the in-app report. */
+/** Review & sync: walk metadata is read-only — project comes from the picker, preparer
+ *  from the logged-in account (design §CAPTURE "Review change") — then upload with live
+ *  progress and hand off to the in-app report. */
 export function ReviewScreen({ pendingWalkId, online, onBack, onOpenReport, onNewWalk }: Props) {
   const [thumbs, setThumbs] = useState<string[]>([]);
   const [count, setCount] = useState(0);
   const [bytes, setBytes] = useState(0);
   const [date, setDate] = useState('');
 
-  const [name, setName] = useState('');
-  const [project, setProject] = useState('');
-  const [recent, setRecent] = useState<string[]>([]);
-  const [hydrated, setHydrated] = useState(false);
+  // Provenance (design: "From picker" / "From login"). Both gates precede this screen,
+  // so these are present in practice; the null fallbacks just keep a cleared-storage
+  // edge case from syncing unattributed data.
+  const account = getAccount();
+  const activeProject = getActiveProject();
+  const preparerName = account ? account.name?.trim() || account.email : '';
 
   const [running, setRunning] = useState(false);
   const [pct, setPct] = useState(0);
@@ -78,13 +73,9 @@ export function ReviewScreen({ pendingWalkId, online, onBack, onOpenReport, onNe
   const [reportId, setReportId] = useState<string | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
-  const listId = useId();
-
-  // Hydrate observations + walk details. Reset `hydrated` first so a different walk
-  // never persists the prior walk's details before its own values are loaded.
+  // Hydrate observation counts/thumbs for the summary card.
   useEffect(() => {
     let alive = true;
-    setHydrated(false);
     (async () => {
       const [walk, obs] = await Promise.all([getWalk(pendingWalkId), getObservationsForWalk(pendingWalkId)]);
       const firstPhotos: string[] = [];
@@ -97,31 +88,25 @@ export function ReviewScreen({ pendingWalkId, online, onBack, onOpenReport, onNe
       setCount(obs.length);
       setBytes(await walkByteSize(pendingWalkId));
       setDate(walk?.date ?? '');
-      const savedName = getPreparerName();
-      const walkName = walk?.superName && walk.superName !== STALE_NAME ? walk.superName : '';
-      setName(walkName || savedName);
-      setProject(walk?.projectName ?? '');
-      setRecent(getRecentProjects());
-      setHydrated(true);
     })();
     return () => {
       alive = false;
     };
   }, [pendingWalkId]);
 
-  // Persist details to the durable walk whenever a hydrated value changes.
+  // Stamp the account + picked project onto the durable walk row, so sync (which builds
+  // the manifest from the store) and a crash-recovered walk both carry the right
+  // attribution. Re-stamps if the user switches projects and comes back.
   useEffect(() => {
-    if (!hydrated) return;
-    const n = name.trim();
-    const p = project.trim();
+    if (!activeProject || !preparerName) return;
     void setWalkDetails(pendingWalkId, {
-      superName: n,
-      projectName: p,
-      projectId: p ? projectIdForName(p) : '',
+      superName: preparerName,
+      projectName: activeProject.projectName,
+      projectId: activeProject.projectId,
     });
-  }, [name, project, hydrated, pendingWalkId]);
+  }, [pendingWalkId, activeProject?.projectId, preparerName]);
 
-  const detailsReady = name.trim().length > 0 && project.trim().length > 0;
+  const detailsReady = activeProject != null && preparerName.length > 0;
 
   async function runSync() {
     if (!detailsReady || !online) return;
@@ -135,6 +120,7 @@ export function ReviewScreen({ pendingWalkId, online, onBack, onOpenReport, onNe
         if (p.phase === 'uploading') setPct(Math.round((p.fraction ?? 0) * 50));
       });
       recordSubmittedReport(result.reportId, count);
+      if (activeProject) recordCapture(activeProject.projectId);
       setReportId(result.reportId);
       setPct(50);
       // Second half: the server writes the report (transcribe → synthesize → render).
@@ -218,51 +204,36 @@ export function ReviewScreen({ pendingWalkId, online, onBack, onOpenReport, onNe
           )}
         </div>
 
-        {/* Required details */}
-        <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-          <div className="label">Report details</div>
-          <div className="field">
-            <label htmlFor={`${listId}-project`}>Project</label>
-            <input
-              id={`${listId}-project`}
-              className="input"
-              type="text"
-              list={listId}
-              autoCapitalize="words"
-              placeholder="e.g. Riverside Tower B"
-              value={project}
-              onChange={(e) => setProject(e.target.value)}
-              onBlur={() => {
-                if (project.trim()) {
-                  recordProject(project);
-                  setRecent(getRecentProjects());
-                }
-              }}
-            />
-            <datalist id={listId}>
-              {recent.map((p) => (
-                <option key={p} value={p} />
-              ))}
-            </datalist>
+        {/* Report details — read-only, sourced from the picker + the login (F3). */}
+        <div className="meta-card">
+          <div className="meta-row">
+            <span className="k">Project</span>
+            <span className="v">{activeProject?.projectName ?? '—'}</span>
+            <span className="locked-badge">
+              <Icon name="lock" size={10} strokeWidth={2.4} />
+              From picker
+            </span>
           </div>
-          <div className="field">
-            <label htmlFor={`${listId}-name`}>Your name</label>
-            <input
-              id={`${listId}-name`}
-              className="input"
-              type="text"
-              autoComplete="name"
-              placeholder="e.g. Sam Rivera"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              onBlur={() => setPreparerName(name)}
-            />
-            <span className="hint">Shown on the report as who prepared it.</span>
+          <div className="meta-row">
+            <span className="k">Preparer</span>
+            <span className="v">{preparerName || '—'}</span>
+            <span className="locked-badge">
+              <Icon name="lock" size={10} strokeWidth={2.4} />
+              From login
+            </span>
           </div>
-          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13.5 }}>
-            <span className="muted">Date</span>
-            <span style={{ color: 'var(--fg)', fontWeight: 600 }}>{date ? formatLongDate(date) : '—'}</span>
+          <div className="meta-row">
+            <span className="k">Date</span>
+            <span className="v">{date ? formatLongDate(date) : '—'}</span>
           </div>
+        </div>
+
+        <div className="note note-info">
+          <Icon name="info" size={16} strokeWidth={1.9} />
+          <span>
+            <b>Changed:</b> project and preparer now come from your login and the project you
+            picked — no longer typed by hand.
+          </span>
         </div>
 
         {/* State-driven block */}
@@ -301,7 +272,7 @@ export function ReviewScreen({ pendingWalkId, online, onBack, onOpenReport, onNe
             )}
             {!detailsReady && (
               <p className="muted" style={{ fontSize: 13, marginBottom: 0 }}>
-                Add your name and project above to sync.
+                Log in and pick a project to sync.
               </p>
             )}
             <button

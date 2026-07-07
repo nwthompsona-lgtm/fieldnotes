@@ -8,8 +8,8 @@ export const API_BASE: string = (import.meta.env.VITE_API_BASE || 'http://localh
   '',
 );
 
-// Project and preparer are NO LONGER baked in — the user enters them (required) on the
-// Review & Sync screen so nothing is attributed to a guessed default. See lib/profile.ts.
+// Project and preparer are NOT config — they come from the picked project and the
+// logged-in account (Phase 11 / F3). See lib/activeProject.ts + lib/session.ts.
 
 export const UPLOAD_URL = `${API_BASE}/api/upload`;
 

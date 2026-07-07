@@ -1,31 +1,38 @@
-/* FieldReport CAPTURE — redesigned UI (Daylight / Nightshift).
-   White + blue visual language. Blue = primary actions. Amber = the voice-record
-   affordance ONLY. Green/red are reserved strictly for connectivity/destructive
-   status — never for brand. Tokens come from the design handoff. */
+/* FieldReport CAPTURE — Flux design system (Daylight / Nightshift), per the auth-ui
+   design handoff. Blue = primary actions. Teal (--data) = data/sent/opened. Amber = the
+   voice-record affordance + draft/warning ONLY. Green/red stay strictly for
+   connectivity/success + destructive status — never for brand. */
 
 :root {
   /* Daylight (light) — default */
-  --bg: #eef1f5;
+  --bg: #eef2f7;
   --surface: #ffffff;
-  --surface-2: #f5f7fa;
-  --fg: #0e141b;
-  --muted: #5b6675;
-  --line: #e1e6ec;
-  --primary: #2563eb;
+  --surface-2: #f3f6fb;
+  --fg: #10151d;
+  --muted: #667283;
+  --line: #e6ebf2;
+  --line-strong: #d5dbe6;
+  --primary: #2b54e0;
   --primary-ink: #ffffff;
-  --primary-soft: #e7eefd;
-  --accent: #f59e0b;
-  --accent-ink: #3a1d02;
+  --primary-soft: #e7edfc;
+  --data: #0ea5b7;
+  --data-soft: #d4f3f6;
+  --data-ink: #0a8391;
+  --accent: #d9a441;
+  --accent-soft: #fdefd6;
+  --accent-ink: #96591a;
   --danger: #e0492f;
-  --ok: #0ea45a;
+  --danger-soft: #fbeae8;
+  --ok: #078a78;
+  --ok-soft: #d7f5ee;
 
-  --radius: 13px;
-  --radius-sm: 9px;
-  --shadow: 0 1px 2px rgba(14, 20, 27, 0.06), 0 12px 26px -16px rgba(14, 20, 27, 0.22);
-  --ring: rgba(37, 99, 235, 0.3);
+  --radius: 18px;
+  --radius-sm: 12px;
+  --shadow: 0 1px 2px rgba(16, 21, 29, 0.05), 0 16px 34px -22px rgba(16, 21, 29, 0.32);
+  --ring: rgba(43, 84, 224, 0.26);
 
-  --font: 'IBM Plex Sans', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-  --display: 'Space Grotesk', system-ui, -apple-system, sans-serif;
+  --font: 'Plus Jakarta Sans', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  --display: 'Plus Jakarta Sans', system-ui, -apple-system, sans-serif;
 
   /* Sticky-header top pad: 54px look, but clear the notch on installed devices. */
   --safe-top: max(54px, calc(env(safe-area-inset-top, 0px) + 16px));
@@ -34,21 +41,28 @@
 
 [data-theme='dark'] {
   /* Nightshift (dark) */
-  --bg: #0b0e13;
-  --surface: #141a22;
-  --surface-2: #1a212b;
+  --bg: #0d1017;
+  --surface: #161c24;
+  --surface-2: #1d242e;
   --fg: #e8ecf2;
   --muted: #8a95a6;
-  --line: #232c39;
-  --primary: #4c8dff;
-  --primary-ink: #04101f;
-  --primary-soft: #11223b;
+  --line: #242d3a;
+  --line-strong: #303b49;
+  --primary: #5b82f5;
+  --primary-ink: #06101f;
+  --primary-soft: #16243c;
+  --data: #2dd4e0;
+  --data-soft: #0e2e33;
+  --data-ink: #7fe6ef;
   --accent: #fbbf24;
-  --accent-ink: #2a1a04;
+  --accent-soft: #2a2410;
+  --accent-ink: #fbbf24;
   --danger: #ff6151;
+  --danger-soft: #2c1714;
   --ok: #34d399;
-  --shadow: 0 1px 2px rgba(0, 0, 0, 0.5), 0 16px 36px -18px rgba(0, 0, 0, 0.75);
-  --ring: rgba(76, 141, 255, 0.34);
+  --ok-soft: #0f2a20;
+  --shadow: 0 1px 2px rgba(0, 0, 0, 0.5), 0 18px 40px -20px rgba(0, 0, 0, 0.75);
+  --ring: rgba(91, 130, 245, 0.34);
 }
 
 * {
@@ -305,7 +319,7 @@ button {
   appearance: none;
   width: 100%;
   min-height: 48px;
-  border: 1.5px solid var(--line);
+  border: 1.5px solid var(--line-strong);
   border-radius: var(--radius-sm);
   padding: 10px 14px;
   font-family: inherit;
@@ -395,6 +409,169 @@ textarea.input {
   background: var(--primary);
   color: var(--primary-ink);
   border-color: transparent;
+}
+
+/* ---- auth + project picker (Phase 11 / F3, design handoff) --------------- */
+/* Read-only walk metadata (Review screen): stacked rows in one card. */
+.meta-card {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  overflow: hidden;
+}
+.meta-row {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  padding: 14px 16px;
+}
+.meta-row + .meta-row {
+  border-top: 1px solid var(--line);
+}
+.meta-row .k {
+  font-size: 13.5px;
+  color: var(--muted);
+  flex: 1;
+}
+.meta-row .v {
+  font-size: 14.5px;
+  font-weight: 600;
+  color: var(--fg);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* "From picker" / "From login" provenance badge. */
+.locked-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--muted);
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 2px 8px;
+  white-space: nowrap;
+  flex: 0 0 auto;
+}
+/* Informational note (primary-soft) + neutral hint note (surface-2). */
+.note {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  padding: 13px 14px;
+  border-radius: var(--radius-sm);
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+.note-info {
+  background: var(--primary-soft);
+  color: var(--fg);
+}
+.note-info > svg {
+  color: var(--primary);
+  flex: 0 0 auto;
+  margin-top: 1px;
+}
+.note-hint {
+  background: var(--surface-2);
+  color: var(--muted);
+}
+.note-hint > svg {
+  flex: 0 0 auto;
+  margin-top: 1px;
+}
+/* Project picker cards. */
+.proj-card {
+  display: flex;
+  align-items: center;
+  gap: 13px;
+  width: 100%;
+  background: var(--surface);
+  border: 1.5px solid var(--line);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  padding: 13px 14px;
+  cursor: pointer;
+  font-family: inherit;
+  transition: transform 0.06s ease;
+  text-align: left;
+}
+.proj-card:active {
+  transform: scale(0.99);
+}
+.proj-card.recent {
+  border-color: var(--primary);
+}
+.proj-card .proj-ico {
+  display: flex;
+  width: 46px;
+  height: 46px;
+  border-radius: 13px;
+  background: var(--primary-soft);
+  color: var(--primary);
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+}
+.recent-pill {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--primary);
+  background: var(--primary-soft);
+  border-radius: 999px;
+  padding: 2px 8px;
+  flex: 0 0 auto;
+}
+/* Future-SSO row (login). */
+.sso-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  opacity: 0.6;
+}
+.sso-box {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 50px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--muted);
+}
+.divider {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 22px 0 16px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.divider::before,
+.divider::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: var(--line);
+}
+.soon-pill {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--muted);
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 3px 11px;
 }
 
 /* ---- keyframes ---------------------------------------------------------- */

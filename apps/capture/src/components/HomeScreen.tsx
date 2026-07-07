@@ -14,6 +14,9 @@ interface Props {
   onToggleTheme: () => void;
   refreshKey: number;
   pendingWalkId: string | null;
+  /** The picked project this walk captures into (F3) — tap to switch. */
+  projectName: string;
+  onSwitchProject: () => void;
   onNewObservation: () => void;
   onDone: () => void;
   onOpenPending: () => void;
@@ -32,6 +35,8 @@ export function HomeScreen({
   onToggleTheme,
   refreshKey,
   pendingWalkId,
+  projectName,
+  onSwitchProject,
   onNewObservation,
   onDone,
   onOpenPending,
@@ -74,6 +79,23 @@ export function HomeScreen({
             </span>
           </div>
         </div>
+        {/* The picked project this walk captures into (F3) — tap to switch. */}
+        <button
+          className="status-pill"
+          onClick={onSwitchProject}
+          style={{ marginTop: 10, cursor: 'pointer', maxWidth: '100%', color: 'var(--fg)' }}
+          aria-label={`Capturing into ${projectName} — switch project`}
+        >
+          <span style={{ color: 'var(--primary)', display: 'flex', flex: '0 0 auto' }}>
+            <Icon name="building" size={14} strokeWidth={2} />
+          </span>
+          <span style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            {projectName}
+          </span>
+          <span className="muted" style={{ display: 'flex', flex: '0 0 auto' }}>
+            <Icon name="chevronRight" size={13} strokeWidth={2.4} />
+          </span>
+        </button>
       </div>
 
       <div className="screen-body">

@@ -24,7 +24,12 @@ export type IconName =
   | 'pause'
   | 'drive'
   | 'edit'
-  | 'home';
+  | 'home'
+  | 'building' // project (picker cards)
+  | 'search'
+  | 'lock' // provenance badges (From picker / From login)
+  | 'info'
+  | 'signout';
 
 const FILLED = new Set<IconName>(['sparkle', 'moon', 'play', 'pause']);
 
@@ -100,6 +105,37 @@ const PATHS: Record<IconName, JSX.Element> = {
     </>
   ),
   home: <path d="M12 16V4M8 8l4-4 4 4M5 20h14" />,
+  building: (
+    <>
+      <path d="M3 21V8l7-4 7 4v13" />
+      <path d="M3 21h18M9 21v-5h2v5" />
+      <path d="M13 9h.01M13 13h.01M7 9h.01M7 13h.01" />
+    </>
+  ),
+  search: (
+    <>
+      <circle cx="11" cy="11" r="7" />
+      <path d="M20 20l-3.2-3.2" />
+    </>
+  ),
+  lock: (
+    <>
+      <rect x="5" y="11" width="14" height="9" rx="2" />
+      <path d="M8 11V8a4 4 0 0 1 8 0v3" />
+    </>
+  ),
+  info: (
+    <>
+      <circle cx="12" cy="12" r="9" />
+      <path d="M12 16v-4M12 8h.01" />
+    </>
+  ),
+  signout: (
+    <>
+      <path d="M9 21H6a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3" />
+      <path d="M16 17l5-5-5-5M21 12H9" />
+    </>
+  ),
 };
 
 interface IconProps {

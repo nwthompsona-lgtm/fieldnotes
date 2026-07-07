@@ -31,7 +31,7 @@ export function applyTheme(theme: Theme): void {
   if (typeof document === 'undefined') return;
   document.documentElement.setAttribute('data-theme', theme);
   const meta = document.querySelector('meta[name="theme-color"]');
-  if (meta) meta.setAttribute('content', theme === 'dark' ? '#0B0E13' : '#EEF1F5');
+  if (meta) meta.setAttribute('content', theme === 'dark' ? '#0D1017' : '#EEF2F7');
 }
 
 /** Persist + apply the user's chosen theme. */

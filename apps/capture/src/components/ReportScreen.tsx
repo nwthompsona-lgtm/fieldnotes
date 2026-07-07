@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Icon } from './Icon';
-import { finalizeReport, getReport, hostedUrl, patchReport, pdfUrl } from '../lib/api';
+import { fetchPdfBlobUrl, finalizeReport, getReport, patchReport } from '../lib/api';
+import { reviewUrl } from '../config';
 import { formatLongDate } from '../lib/format';
 import type { Report } from '@fieldreport/contracts';
 
@@ -84,21 +85,20 @@ export function ReportScreen({ reportId, online, onBack }: Props) {
     return updated;
   }
 
-  // Export = finalize, so the PDF is never a watermarked draft (decision 1.5).
+  // Export = finalize, so the PDF is never a watermarked draft (decision 1.5). The PDF
+  // route is session-gated (§6.6) — a bare tab can't send the bearer, so fetch the bytes
+  // with the header and hand the tab an object URL.
   async function exportPdf() {
     setError(null);
-    if (report && report.status === 'reviewed') {
-      window.open(pdfUrl(reportId), '_blank', 'noopener'); // already final — open directly
-      return;
-    }
     // Open the tab now (within the user gesture) so it isn't popup-blocked, then point it
-    // at the freshly finalized PDF once rendering completes.
+    // at the fetched PDF once finalize + render complete.
     const win = window.open('', '_blank');
     setFinalizing(true);
     try {
       await ensureFinalized();
-      if (win) win.location.href = pdfUrl(reportId);
-      else window.open(pdfUrl(reportId), '_blank', 'noopener');
+      const blobUrl = await fetchPdfBlobUrl(reportId);
+      if (win) win.location.href = blobUrl;
+      else window.open(blobUrl, '_blank', 'noopener');
     } catch (e) {
       win?.close();
       setError((e as Error).message);
@@ -107,25 +107,21 @@ export function ReportScreen({ reportId, online, onBack }: Props) {
     }
   }
 
+  // Distribution lives in the web app (§8: private per-recipient links, open tracking,
+  // revoke). Finalize here, then hand off to the web review page with the Send modal open
+  // — sharing the hosted /r URL directly would dead-end recipients at a login wall.
   async function send() {
+    const win = window.open('', '_blank'); // within the gesture, so it isn't popup-blocked
     setFinalizing(true);
     setError(null);
     try {
-      const updated = await ensureFinalized();
+      await ensureFinalized();
       setSent(true);
-      const url = hostedUrl(reportId);
-      const title = `Field report — ${updated.projectName ?? updated.projectId}`;
-      const nav = navigator as Navigator & { share?: (d: ShareData) => Promise<void> };
-      if (nav.share) {
-        try {
-          await nav.share({ title, text: `${title} · ${formatLongDate(updated.date)}`, url });
-        } catch {
-          /* user dismissed the share sheet — finalize still succeeded */
-        }
-      } else {
-        window.open(url, '_blank', 'noopener');
-      }
+      const url = `${reviewUrl(reportId)}?send=1`;
+      if (win) win.location.href = url;
+      else window.open(url, '_blank', 'noopener');
     } catch (e) {
+      win?.close();
       setError((e as Error).message);
     } finally {
       setFinalizing(false);
