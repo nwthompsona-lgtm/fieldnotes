@@ -35,6 +35,8 @@ export interface Authz {
   projectAccess(req: FastifyRequest, projectId: string): Promise<ProjectAccess>;
   /** Capture/upload to the project: org admin, pm, or super (§5.1 row 1). */
   canCapture(req: FastifyRequest, projectId: string): Promise<boolean>;
+  /** Manage the project (roster, members, visibility): org admin or pm (§5.1). */
+  canManageProject(req: FastifyRequest, projectId: string): Promise<boolean>;
   /** See the project at all (list endpoint gate): any org member or project role. */
   canViewProject(req: FastifyRequest, projectId: string): Promise<boolean>;
   /** See THIS report: draft visibility is role-gated, org-wide visibility needs
@@ -99,6 +101,11 @@ export function makeAuthz(repo: Repo): Authz {
     async canCapture(req, projectId) {
       const a = await projectAccess(req, projectId);
       return a.orgRole === 'admin' || a.projectRole === 'pm' || a.projectRole === 'super';
+    },
+
+    async canManageProject(req, projectId) {
+      const a = await projectAccess(req, projectId);
+      return a.orgRole === 'admin' || a.projectRole === 'pm';
     },
 
     async canViewProject(req, projectId) {

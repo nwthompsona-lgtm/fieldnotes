@@ -219,6 +219,10 @@ export interface Repo {
   listReportQualityForOrgs(orgIds: string[]): Promise<ReportQuality[]>;
 
   // stakeholder directory (org level, D-8)
+  /** Owning tenant org of a stakeholder org (null if unknown) — cross-org write guard. */
+  getStakeholderOrgOrgId(id: string): Promise<string | null>;
+  /** Owning tenant org of a contact, via its stakeholder org (null if unknown). */
+  getStakeholderContactOrgId(id: string): Promise<string | null>;
   listStakeholderOrgs(orgId: string): Promise<StakeholderOrg[]>; // with contacts
   createStakeholderOrg(s: {
     id: string;

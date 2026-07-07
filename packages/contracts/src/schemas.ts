@@ -390,6 +390,41 @@ export const StakeholderOrg = z.object({
 });
 export type StakeholderOrg = z.infer<typeof StakeholderOrg>;
 
+// Directory + roster request DTOs (Phase 7) — shared so the web Settings UI validates the
+// same shapes the server enforces.
+
+export const CreateStakeholderOrgRequest = z.object({
+  name: z.string().min(1).max(200),
+  kind: StakeholderKind,
+});
+export type CreateStakeholderOrgRequest = z.infer<typeof CreateStakeholderOrgRequest>;
+
+export const UpdateStakeholderOrgRequest = z.object({
+  name: z.string().min(1).max(200).optional(),
+  kind: StakeholderKind.optional(),
+});
+export type UpdateStakeholderOrgRequest = z.infer<typeof UpdateStakeholderOrgRequest>;
+
+export const CreateStakeholderContactRequest = z.object({
+  name: z.string().min(1).max(200),
+  email: z.string().email().max(254),
+  title: z.string().max(200).optional(),
+});
+export type CreateStakeholderContactRequest = z.infer<typeof CreateStakeholderContactRequest>;
+
+export const UpdateStakeholderContactRequest = z.object({
+  name: z.string().min(1).max(200).optional(),
+  email: z.string().email().max(254).optional(),
+  title: z.string().max(200).optional(),
+});
+export type UpdateStakeholderContactRequest = z.infer<typeof UpdateStakeholderContactRequest>;
+
+/** Replace a project's roster wholesale (set semantics). */
+export const SetProjectRosterRequest = z.object({
+  stakeholderOrgIds: z.array(z.string().max(100)).max(200).default([]),
+});
+export type SetProjectRosterRequest = z.infer<typeof SetProjectRosterRequest>;
+
 // Send + delivery (plan §8, D-9).
 
 /** Who to send to: whole stakeholder orgs, specific contacts, and typed one-offs. */

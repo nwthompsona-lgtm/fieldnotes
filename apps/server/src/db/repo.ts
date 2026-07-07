@@ -947,6 +947,26 @@ export function makeRepo(db: Db): Repo {
 
     // stakeholder directory
 
+    async getStakeholderOrgOrgId(id) {
+      const r = (
+        await db.select({ orgId: stakeholderOrgs.orgId }).from(stakeholderOrgs).where(eq(stakeholderOrgs.id, id)).limit(1)
+      )[0];
+      return r?.orgId ?? null;
+    },
+
+    async getStakeholderContactOrgId(id) {
+      // Contact → its stakeholder org → the owning tenant org, for cross-org write guards.
+      const r = (
+        await db
+          .select({ orgId: stakeholderOrgs.orgId })
+          .from(stakeholderContacts)
+          .innerJoin(stakeholderOrgs, eq(stakeholderContacts.stakeholderOrgId, stakeholderOrgs.id))
+          .where(eq(stakeholderContacts.id, id))
+          .limit(1)
+      )[0];
+      return r?.orgId ?? null;
+    },
+
     async listStakeholderOrgs(orgId) {
       const sos = await db
         .select()

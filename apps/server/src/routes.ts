@@ -19,6 +19,7 @@ import { reportQualityMetrics, computeRollup } from './quality.js';
 import { recordRunFeedback } from './observability.js';
 import { registerAuthRoutes } from './auth/routes.js';
 import { registerInvitationRoutes } from './auth/invitations.js';
+import { registerDirectoryRoutes } from './directory.js';
 import { bearerToken, requireAuth } from './auth/context.js';
 import type { ReportAccessMeta } from './auth/authz.js';
 
@@ -34,9 +35,11 @@ export function registerRoutes(app: FastifyInstance, deps: ServerDeps): void {
   const { repo, storage, config, authz } = deps;
   const base = config.publicBaseUrl;
 
-  // /api/auth/* (signup/login/logout/me — auth plan §4.2) + invitations (Phase 6).
+  // /api/auth/* (signup/login/logout/me — auth plan §4.2) + invitations (Phase 6) +
+  // stakeholder directory / roster / distribution defaults (Phase 7).
   registerAuthRoutes(app, deps);
   registerInvitationRoutes(app, deps);
+  registerDirectoryRoutes(app, deps);
 
   /** Break-glass superadmin (§15.3): the static ADMIN_TOKEN sees all orgs, but only
    *  when explicitly enabled — off by default since Phase 4 re-gated /api/admin/*.
