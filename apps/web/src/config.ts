@@ -9,6 +9,9 @@ export const API_BASE: string = (
 /** localStorage key for the persisted admin bearer token. */
 export const ADMIN_TOKEN_KEY = 'fieldreport.adminToken';
 
+/** localStorage key for the persisted user session token (T-1: bearer in localStorage). */
+export const SESSION_TOKEN_KEY = 'fieldreport.sessionToken';
+
 /** Poll the processing status this often (ms) while a report is not yet ready. */
 export const STATUS_POLL_MS = 3000;
 
