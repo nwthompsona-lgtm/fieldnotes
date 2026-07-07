@@ -176,6 +176,12 @@ export interface Repo {
   /** Projects the user can see in an org: admins all; members their assignments plus
    *  visibility='org' projects (D-4). Non-members get []. */
   listProjectsForUser(userId: string, orgId: string): Promise<Project[]>;
+  /** The user's explicit project_member roles across an org's projects, batched (one
+   *  query) so the shell's project switcher can label each project without N lookups. */
+  listProjectRolesForUser(
+    userId: string,
+    orgId: string,
+  ): Promise<Array<{ projectId: string; role: ProjectRole }>>;
   createProject(p: {
     id: string;
     orgId: string;

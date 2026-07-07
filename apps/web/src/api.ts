@@ -13,6 +13,7 @@ import type {
   ProcessingStatus,
 } from '@fieldreport/contracts';
 import { API_BASE } from './config';
+import { authHeaders } from './session';
 
 /** Shape of GET /api/reports/:id/status. */
 export interface StatusEnvelope {
@@ -35,7 +36,11 @@ export class ApiError extends Error {
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   let res: Response;
   try {
-    res = await fetch(`${API_BASE}${path}`, init);
+    // Session bearer first so an explicit header (admin token) can override it.
+    res = await fetch(`${API_BASE}${path}`, {
+      ...init,
+      headers: { ...authHeaders(), ...(init?.headers ?? {}) },
+    });
   } catch (cause) {
     // Network/DNS/CORS-level failure — no HTTP status to report.
     throw new ApiError(0, `Could not reach the server at ${API_BASE}.`);

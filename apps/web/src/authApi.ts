@@ -16,6 +16,8 @@ import type {
   AcceptInviteRequest,
   AcceptInviteResponse,
   OrgRole,
+  Project,
+  ProjectRole,
   Report,
 } from '@fieldreport/contracts';
 import { API_BASE } from './config';
@@ -107,6 +109,16 @@ export async function acceptInvite(body: AcceptInviteRequest): Promise<AcceptInv
   const res = await authed<AcceptInviteResponse>('/api/auth/invitations/accept', jsonBody(body));
   if ('token' in res) landSession(res);
   return res;
+}
+
+// ── Workspace (§9 app shell) ────────────────────────────────────────────────────
+/** A project row plus the caller's explicit project role (null = visible only via org
+ *  visibility or org-admin) — drives the permission-matrix gating in the UI. */
+export type ProjectWithRole = Project & { role: ProjectRole | null };
+
+/** Projects the caller can see in an org (drives the project switcher). */
+export function listProjects(orgId: string): Promise<ProjectWithRole[]> {
+  return authed<ProjectWithRole[]>(`/api/orgs/${encodeURIComponent(orgId)}/projects`);
 }
 
 // ── Reports (§6.2–§6.3) ─────────────────────────────────────────────────────────

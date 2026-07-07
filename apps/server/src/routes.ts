@@ -192,6 +192,28 @@ export function registerRoutes(app: FastifyInstance, deps: ServerDeps): void {
     return reply.code(202).send(result);
   });
 
+  // ── Workspace (app-shell switchers) ─────────────────────────────────────────
+  // The projects the caller can see in an org (admins: all; members: their assignments +
+  // org-visible projects — repo.listProjectsForUser scopes it), each with the caller's
+  // explicit project role (null = visible via org visibility / org-admin only) so the UI
+  // can gate actions per the permission matrix. 404 (no leak) when the caller isn't a
+  // member of the org. Feeds the web app's project switcher (§9 shell).
+  app.get<{ Params: { orgId: string } }>(
+    '/api/orgs/:orgId/projects',
+    { preHandler: requireAuth },
+    async (req, reply) => {
+      if (!(await repo.getMembership(req.auth!.userId, req.params.orgId))) {
+        return reply.code(404).send({ error: 'not found' });
+      }
+      const [projs, roleRows] = await Promise.all([
+        repo.listProjectsForUser(req.auth!.userId, req.params.orgId),
+        repo.listProjectRolesForUser(req.auth!.userId, req.params.orgId),
+      ]);
+      const roles = new Map(roleRows.map((r) => [r.projectId, r.role]));
+      return projs.map((p) => ({ ...p, role: roles.get(p.id) ?? null }));
+    },
+  );
+
   // ── Reports ───────────────────────────────────────────────────────────────
 
   // §6.2: the scoped list (replaces /api/admin/reports for normal users). Role-aware:

@@ -758,6 +758,14 @@ export function makeRepo(db: Db): Repo {
         .map(mapProject);
     },
 
+    async listProjectRolesForUser(userId, orgId) {
+      return db
+        .select({ projectId: projectMembers.projectId, role: projectMembers.projectRole })
+        .from(projectMembers)
+        .innerJoin(projects, eq(projectMembers.projectId, projects.id))
+        .where(and(eq(projectMembers.userId, userId), eq(projects.orgId, orgId)));
+    },
+
     async createProject(p) {
       await db.insert(projects).values({
         id: p.id,
