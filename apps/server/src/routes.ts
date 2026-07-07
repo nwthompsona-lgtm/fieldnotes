@@ -13,13 +13,14 @@ import {
 } from '@fieldreport/contracts';
 import type { ServerDeps } from './deps.js';
 import { processUpload } from './ingest/index.js';
-import { runPipeline, renderAndStore } from './pipeline.js';
+import { runPipeline, renderAndStore, ensureArtifacts } from './pipeline.js';
 import { storageKeys } from './storage/types.js';
 import { reportQualityMetrics, computeRollup } from './quality.js';
 import { recordRunFeedback } from './observability.js';
 import { registerAuthRoutes } from './auth/routes.js';
 import { registerInvitationRoutes } from './auth/invitations.js';
 import { registerDirectoryRoutes } from './directory.js';
+import { registerSendRoutes } from './send.js';
 import { bearerToken, requireAuth } from './auth/context.js';
 import type { ReportAccessMeta } from './auth/authz.js';
 
@@ -36,10 +37,12 @@ export function registerRoutes(app: FastifyInstance, deps: ServerDeps): void {
   const base = config.publicBaseUrl;
 
   // /api/auth/* (signup/login/logout/me — auth plan §4.2) + invitations (Phase 6) +
-  // stakeholder directory / roster / distribution defaults (Phase 7).
+  // stakeholder directory / roster / distribution defaults (Phase 7) + send/delivery +
+  // external /s/:token (Phase 8).
   registerAuthRoutes(app, deps);
   registerInvitationRoutes(app, deps);
   registerDirectoryRoutes(app, deps);
+  registerSendRoutes(app, deps);
 
   /** Break-glass superadmin (§15.3): the static ADMIN_TOKEN sees all orgs, but only
    *  when explicitly enabled — off by default since Phase 4 re-gated /api/admin/*.
@@ -72,19 +75,10 @@ export function registerRoutes(app: FastifyInstance, deps: ServerDeps): void {
     };
   };
 
-  // Lazily (re)render the hosted HTML+PDF for a READY report and cache them. Edits delete
-  // these artifacts (see PATCH), so the next view re-renders fresh from current data —
-  // the draft watermark follows status (draft → watermark, reviewed → clean). Returns
-  // false when the report isn't ready yet, so the caller shows a processing page / 425.
-  const ensureArtifacts = async (id: string): Promise<boolean> => {
-    const htmlKey = storageKeys.html(id);
-    const pdfKey = storageKeys.pdf(id);
-    if ((await storage.exists(htmlKey)) && (await storage.exists(pdfKey))) return true;
-    const status = await repo.getReportStatus(id);
-    if (!status || status.processing !== 'ready') return false;
-    await renderAndStore(deps, id, status.status === 'reviewed');
-    return true;
-  };
+  // Hosted-artifact lazy render/cache now lives in pipeline.ts (shared with /s/:token). Edits
+  // invalidate the cache (see PATCH) so the next view re-renders fresh; the draft watermark
+  // follows status. Returns false when the report isn't ready → caller shows a 425/processing.
+  const ensureArtifactsFor = (id: string): Promise<boolean> => ensureArtifacts(deps, id);
 
   // The §6.3 view gate in ONE place: fetch the cheap access-meta (not a full report) and
   // 404 — never 403 — when the report is missing or unviewable, so ids never leak. Every
@@ -337,7 +331,7 @@ export function registerRoutes(app: FastifyInstance, deps: ServerDeps): void {
     { preHandler: requireAuth },
     async (req, reply) => {
       if (!(await loadViewableReport(req.params.id, req, reply))) return reply;
-      if (!(await ensureArtifacts(req.params.id))) {
+      if (!(await ensureArtifactsFor(req.params.id))) {
         reply.type('text/html');
         return processingPage(req.params.id, base);
       }
@@ -352,7 +346,7 @@ export function registerRoutes(app: FastifyInstance, deps: ServerDeps): void {
     { preHandler: requireAuth },
     async (req, reply) => {
       if (!(await loadViewableReport(req.params.id, req, reply))) return reply;
-      if (!(await ensureArtifacts(req.params.id))) return reply.code(425).send({ error: 'not ready' });
+      if (!(await ensureArtifactsFor(req.params.id))) return reply.code(425).send({ error: 'not ready' });
       const obj = await storage.get(storageKeys.pdf(req.params.id));
       reply
         .type('application/pdf')

@@ -271,10 +271,21 @@ export interface Repo {
       expiresAt: Date;
     }>,
   ): Promise<void>;
+  /** Resolve a SendSelection's org/contact ids to concrete contacts, scoped to `orgId`
+   *  (cross-org ids resolve to nothing). Deduped by contact id; adHoc is added by the route. */
+  resolveSelectionContacts(
+    orgId: string,
+    stakeholderOrgIds: string[],
+    contactIds: string[],
+  ): Promise<Array<{ contactId: string; name: string; email: string }>>;
   getRecipientByToken(token: string): Promise<(RecipientRow & { reportId: string }) | null>;
+  /** By recipient id (for revoke/resend), with the owning report id for a tenancy check. */
+  getRecipientById(id: string): Promise<(RecipientRow & { reportId: string }) | null>;
   /** first_opened_at ??= now(); last_opened_at = now(); open_count++ (§8.4). */
   recordRecipientOpen(token: string): Promise<void>;
   revokeRecipient(id: string): Promise<void>;
+  /** Resend of an expired link: fresh token + expiry on the same row (keeps open history). */
+  refreshRecipientToken(id: string, patch: { token: string; expiresAt: Date }): Promise<void>;
   listSendsForReport(reportId: string): Promise<ReportSend[]>; // with recipients (delivery panel)
   /** Latest send rollup for the report-list chip: sentAt + opened/total. */
   getReportLatestSendSummary(

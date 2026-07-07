@@ -52,6 +52,23 @@ export async function renderAndStore(
   return { htmlKey, pdfKey };
 }
 
+/** Ensure the hosted HTML+PDF exist for a READY report, rendering + caching on first view
+ *  (edits invalidate the cache, so the next view re-renders fresh). Returns false when the
+ *  report isn't ready yet. Shared by the internal /r routes and the external /s routes. */
+export async function ensureArtifacts(deps: ServerDeps, reportId: string): Promise<boolean> {
+  const { storage, repo } = deps;
+  if (
+    (await storage.exists(storageKeys.html(reportId))) &&
+    (await storage.exists(storageKeys.pdf(reportId)))
+  ) {
+    return true;
+  }
+  const status = await repo.getReportStatus(reportId);
+  if (!status || status.processing !== 'ready') return false;
+  await renderAndStore(deps, reportId, status.status === 'reviewed');
+  return true;
+}
+
 /** Light, sliceable metadata stamped on the root trace (project, size, model, deploy). */
 async function buildTraceMetadata(
   deps: ServerDeps,

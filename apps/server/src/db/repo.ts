@@ -3,7 +3,7 @@
  * rows in/out. Upload is idempotent on walkId (a retried upload returns the existing
  * report rather than duplicating). Implements the Repo interface in db/types.ts.
  */
-import { eq, and, asc, desc, inArray, isNull, sql } from 'drizzle-orm';
+import { eq, and, or, asc, desc, inArray, isNull, sql } from 'drizzle-orm';
 import type {
   Report,
   ReportEdit,
@@ -1139,6 +1139,23 @@ export function makeRepo(db: Db): Repo {
       );
     },
 
+    async resolveSelectionContacts(orgId, stakeholderOrgIds, contactIds) {
+      // Tenancy-safe: only contacts whose stakeholder org belongs to `orgId` are returned, so
+      // a crafted cross-org stakeholder/contact id in the selection resolves to nothing.
+      const terms = [];
+      if (stakeholderOrgIds.length) terms.push(inArray(stakeholderContacts.stakeholderOrgId, stakeholderOrgIds));
+      if (contactIds.length) terms.push(inArray(stakeholderContacts.id, contactIds));
+      if (!terms.length) return [];
+      const rows = await db
+        .select({ id: stakeholderContacts.id, name: stakeholderContacts.name, email: stakeholderContacts.email })
+        .from(stakeholderContacts)
+        .innerJoin(stakeholderOrgs, eq(stakeholderContacts.stakeholderOrgId, stakeholderOrgs.id))
+        .where(and(eq(stakeholderOrgs.orgId, orgId), or(...terms)));
+      // Dedupe: a contact can match both a whole-org pick and an explicit contactId pick.
+      const byId = new Map(rows.map((r) => [r.id, { contactId: r.id, name: r.name, email: r.email }]));
+      return [...byId.values()];
+    },
+
     async getRecipientByToken(token) {
       const r = (
         await db
@@ -1149,6 +1166,27 @@ export function makeRepo(db: Db): Repo {
           .limit(1)
       )[0];
       return r ? { ...r.rec, reportId: r.reportId } : null;
+    },
+
+    async getRecipientById(id) {
+      const r = (
+        await db
+          .select({ rec: reportSendRecipients, reportId: reportSends.reportId })
+          .from(reportSendRecipients)
+          .innerJoin(reportSends, eq(reportSendRecipients.sendId, reportSends.id))
+          .where(eq(reportSendRecipients.id, id))
+          .limit(1)
+      )[0];
+      return r ? { ...r.rec, reportId: r.reportId } : null;
+    },
+
+    async refreshRecipientToken(id, patch) {
+      // Resend of an expired link mints a fresh token + expiry on the same recipient row so
+      // its delivery history (opens) is preserved.
+      await db
+        .update(reportSendRecipients)
+        .set({ token: patch.token, expiresAt: patch.expiresAt, revokedAt: null })
+        .where(eq(reportSendRecipients.id, id));
     },
 
     async recordRecipientOpen(token) {
