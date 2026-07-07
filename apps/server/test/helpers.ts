@@ -13,6 +13,7 @@ import { makeStorage } from '../src/storage/index.js';
 import { makeTranscriber } from '../src/stt/index.js';
 import { makeSynthesizer } from '../src/synthesis/index.js';
 import { makeSessions } from '../src/auth/sessions.js';
+import { makeAuthz } from '../src/auth/authz.js';
 import { makeMockEmail } from '../src/email/index.js';
 import type { MockEmailDriver } from '../src/email/mock.js';
 import { config, type AppConfig } from '../src/config.js';
@@ -46,6 +47,7 @@ export async function buildTestDeps(overrides?: Partial<AppConfig>): Promise<Tes
     transcriber: makeTranscriber(cfg),
     synthesizer: makeSynthesizer(cfg),
     sessions: makeSessions(repo, cfg),
+    authz: makeAuthz(repo),
     // Direct mock (not makeEmail) so tests can reach `.sent` without a cast.
     email: makeMockEmail('.data/test-email'),
   };

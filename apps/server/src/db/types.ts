@@ -89,6 +89,7 @@ export interface Repo {
   createReportFromUpload(
     manifest: UploadManifest,
     media: IngestMediaKeys,
+    opts?: { createdBy?: string },
   ): Promise<{ reportId: string; created: boolean; acceptedObservationIds: string[] }>;
 
   // reads
@@ -96,6 +97,11 @@ export interface Repo {
   getReportStatus(
     id: string,
   ): Promise<{ status: ReportStatus; processing: ProcessingStatus; error?: string } | null>;
+  /** The columns authz predicates read (projectId, status, createdBy) — cheap enough for
+   *  the status-poll hot path and hosted-view guards to authorize without full assembly. */
+  getReportViewMeta(
+    id: string,
+  ): Promise<{ id: string; projectId: string; status: ReportStatus; createdBy?: string } | null>;
   listReports(): Promise<Report[]>;
   getProcessingObservations(reportId: string): Promise<ProcessingObservation[]>;
   getReportProjectId(id: string): Promise<string | null>;
@@ -129,8 +135,8 @@ export interface Repo {
   }): Promise<void>;
   getUserByEmail(email: string): Promise<UserRow | null>;
   getUserById(id: string): Promise<UserRow | null>;
-  setUserPassword(id: string, passwordHash: string): Promise<void>;
-  /** Partial update (invite-accept sets name + first password on a pending user). */
+  /** Partial update (invite-accept sets name + first password on a pending user; also the
+   *  single credential-write path — password changes go through here). */
   updateUser(id: string, patch: { name?: string; passwordHash?: string }): Promise<void>;
 
   // sessions (id = the opaque bearer token; expiresAt null = indefinite, D-2)
@@ -201,10 +207,14 @@ export interface Repo {
 
   // seed / backfill (auth plan §12; all idempotent, run at boot)
   upsertOrg(o: { id: string; name: string }): Promise<void>;
+  /** Total org count — the seed uses this to only blanket-adopt orphan projects while the
+   *  pilot org is the sole tenant, so real multi-org data is never cross-adopted. */
+  countOrgs(): Promise<number>;
   /** Adopt pre-tenancy projects: org_id = orgId where org_id IS NULL. */
   adoptOrphanProjects(orgId: string): Promise<void>;
-  /** created_by = userId where created_by IS NULL. */
-  backfillReportsCreatedBy(userId: string): Promise<void>;
+  /** created_by = userId where created_by IS NULL, scoped to `orgId`'s projects so a
+   *  null-author report in another tenant is never mis-attributed. */
+  backfillReportsCreatedBy(userId: string, orgId: string): Promise<void>;
   /** Quality rollup scoped to orgs (admin metrics). */
   listReportQualityForOrgs(orgIds: string[]): Promise<ReportQuality[]>;
 
@@ -266,4 +276,9 @@ export interface Repo {
   getReportLatestSendSummary(
     reportId: string,
   ): Promise<{ sentAt: string; opened: number; total: number } | null>;
+  /** Batched latest-send rollup for a whole list: one pair of queries for all reportIds,
+   *  keyed by reportId (absent = never sent). Avoids the per-row N+1 in the list route. */
+  getLatestSendSummaries(
+    reportIds: string[],
+  ): Promise<Map<string, { sentAt: string; opened: number; total: number }>>;
 }

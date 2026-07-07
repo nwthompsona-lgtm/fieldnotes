@@ -13,6 +13,11 @@ import type { FastifyRequest } from 'fastify';
 import type { OrgRole, ProjectRole, Report } from '@fieldreport/contracts';
 import type { Repo } from '../db/types.js';
 
+/** The only report fields the view/edit predicates read. Lets callers authorize from a
+ *  cheap projection (repo.getReportViewMeta) instead of a full report assembly. A full
+ *  Report satisfies it, so every existing call site keeps working. */
+export type ReportAccessMeta = Pick<Report, 'projectId' | 'status' | 'createdBy'>;
+
 export interface ProjectAccess {
   /** The project's org (null = unknown project or pre-adoption row). */
   orgId: string | null;
@@ -34,12 +39,12 @@ export interface Authz {
   canViewProject(req: FastifyRequest, projectId: string): Promise<boolean>;
   /** See THIS report: draft visibility is role-gated, org-wide visibility needs
    *  status='reviewed' (§5.1 view rows). */
-  canViewReport(req: FastifyRequest, report: Report): Promise<boolean>;
+  canViewReport(req: FastifyRequest, report: ReportAccessMeta): Promise<boolean>;
   /** Edit: admin, pm, or the authoring super (D-6). */
-  canEditReport(req: FastifyRequest, report: Report): Promise<boolean>;
+  canEditReport(req: FastifyRequest, report: ReportAccessMeta): Promise<boolean>;
   /** Finalize = edit; send = finalize (D-7). */
-  canFinalize(req: FastifyRequest, report: Report): Promise<boolean>;
-  canSend(req: FastifyRequest, report: Report): Promise<boolean>;
+  canFinalize(req: FastifyRequest, report: ReportAccessMeta): Promise<boolean>;
+  canSend(req: FastifyRequest, report: ReportAccessMeta): Promise<boolean>;
   /** Org ids where the caller is admin (admin surface scoping, §6.8). */
   adminOrgIds(req: FastifyRequest): Promise<string[]>;
 }
@@ -72,7 +77,7 @@ export function makeAuthz(repo: Repo): Authz {
     });
   }
 
-  async function canEditReport(req: FastifyRequest, report: Report): Promise<boolean> {
+  async function canEditReport(req: FastifyRequest, report: ReportAccessMeta): Promise<boolean> {
     const a = await projectAccess(req, report.projectId);
     if (a.orgRole === 'admin') return true;
     if (a.projectRole === 'pm') return true;

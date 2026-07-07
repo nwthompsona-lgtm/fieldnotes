@@ -47,24 +47,30 @@ async function buildUploadBody(walkId: string): Promise<{ form: FormData; obsCou
 
   const observations = await getObservationsForWalk(walkId);
   const manifestObservations: UploadObservation[] = [];
-  const form = new FormData();
+  // Collect media parts but DON'T attach them yet — the manifest must be the FIRST part in
+  // the body so the authenticated server can check capture rights on the project before it
+  // buffers a single photo (§6.1). Only then are the media parts flushed.
+  const mediaParts: Array<{ field: string; file: File }> = [];
 
   for (const obs of observations) {
     const photos = await getPhotosForObs(obs.id);
     const audio = await getAudioForObs(obs.id);
 
-    // Attach each photo's bytes under a field NAMED exactly photo.id.
+    // Each photo's bytes go under a field NAMED exactly photo.id.
     const photoMeta = photos.map((p) => {
-      form.append(p.id, new File([p.blob], `${p.id}.jpg`, { type: 'image/jpeg' }), `${p.id}.jpg`);
+      mediaParts.push({ field: p.id, file: new File([p.blob], `${p.id}.jpg`, { type: 'image/jpeg' }) });
       return { id: p.id, width: p.width, height: p.height, byteSize: p.byteSize };
     });
 
-    // Attach the voice note under `audio:${obs.id}`.
+    // The voice note goes under `audio:${obs.id}`.
     const audioField = audioFieldFor(obs.id);
     const audioMime = audio?.mime ?? 'audio/webm';
     if (audio) {
       const ext = audioMime.includes('mp4') || audioMime.includes('aac') ? 'm4a' : 'webm';
-      form.append(audioField, new File([audio.blob], `${obs.id}.${ext}`, { type: audioMime }), `${obs.id}.${ext}`);
+      mediaParts.push({
+        field: audioField,
+        file: new File([audio.blob], `${obs.id}.${ext}`, { type: audioMime }),
+      });
     }
 
     manifestObservations.push({
@@ -92,7 +98,9 @@ async function buildUploadBody(walkId: string): Promise<{ form: FormData; obsCou
     },
   });
 
-  form.append('manifest', JSON.stringify(manifest));
+  const form = new FormData();
+  form.append('manifest', JSON.stringify(manifest)); // FIRST part — see above
+  for (const { field, file } of mediaParts) form.append(field, file, file.name);
   return { form, obsCount: manifestObservations.length };
 }
 

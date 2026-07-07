@@ -336,6 +336,18 @@ export const AcceptInviteRequest = z.object({
 });
 export type AcceptInviteRequest = z.infer<typeof AcceptInviteRequest>;
 
+/** Create-invitation body (org admin). Lives here so the web app and server validate the
+ *  same shape; projectAssignments are re-validated server-side against the org (§6). */
+export const CreateInvitationRequest = z.object({
+  email: z.string().email().max(254),
+  orgRole: OrgRole.default('member'),
+  projectAssignments: z
+    .array(z.object({ projectId: z.string().max(100), role: ProjectRole }))
+    .max(50)
+    .default([]),
+});
+export type CreateInvitationRequest = z.infer<typeof CreateInvitationRequest>;
+
 export const AuthResponse = z.object({
   /** Opaque bearer session token (T-1); the SPA stores it and sends Authorization: Bearer. */
   token: z.string(),
@@ -343,6 +355,16 @@ export const AuthResponse = z.object({
   orgs: z.array(Org.extend({ role: OrgRole })),
 });
 export type AuthResponse = z.infer<typeof AuthResponse>;
+
+/** Accept-invite result. A brand-new or still-pending account is activated with the
+ *  supplied credentials and logged straight in (AuthResponse). But an invite for an
+ *  ALREADY-ACTIVE account only ADDS the membership — it never mints a session for the
+ *  token holder (that would be account takeover); the invitee must log in themselves. */
+export const AcceptInviteResponse = z.union([
+  AuthResponse,
+  z.object({ requiresLogin: z.literal(true), email: z.string() }),
+]);
+export type AcceptInviteResponse = z.infer<typeof AcceptInviteResponse>;
 
 export const Me = z.object({
   user: PublicUser,

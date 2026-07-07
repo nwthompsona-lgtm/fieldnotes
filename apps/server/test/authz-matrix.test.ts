@@ -281,11 +281,27 @@ describe('upload scoping (§6.1)', () => {
 });
 
 describe('media + admin surface (§6.7, §6.8)', () => {
-  it('/media/* requires an org-admin session (or enabled break-glass)', async () => {
-    expect((await get(null, '/media/reports/x/photos/y.jpg')).statusCode).toBe(401);
-    expect((await get('viewerA', '/media/reports/x/photos/y.jpg')).statusCode).toBe(403);
-    // Org admin passes the gate; the key simply doesn't exist on local storage.
-    expect((await get('adminA', '/media/reports/x/photos/y.jpg')).statusCode).toBe(404);
+  it('/media/* is gated by report viewability, not org-admin only (§6.7)', async () => {
+    // Store real bytes under a reviewed report's key and a draft report's key.
+    const px = new Uint8Array(
+      await sharp({ create: { width: 4, height: 4, channels: 3, background: { r: 1, g: 2, b: 3 } } })
+        .jpeg()
+        .toBuffer(),
+    );
+    const revKey = `reports/${repRev}/photos/x.jpg`; // reviewed → a viewer may see it
+    const draftKey = `reports/${repDraft}/photos/x.jpg`; // draft → a viewer may NOT
+    await deps.storage.put(revKey, px, { contentType: 'image/jpeg' });
+    await deps.storage.put(draftKey, px, { contentType: 'image/jpeg' });
+
+    expect((await get(null, `/media/${revKey}`)).statusCode).toBe(401); // no session
+    // A plain viewer can load media for a report they can view — not just org-admins.
+    expect((await get('viewerA', `/media/${revKey}`)).statusCode).toBe(200);
+    // …but not for a draft they can't view — 404 (not 403), so keys never leak.
+    expect((await get('viewerA', `/media/${draftKey}`)).statusCode).toBe(404);
+    expect((await get('adminA', `/media/${revKey}`)).statusCode).toBe(200); // org admin
+    expect((await get('outsiderB', `/media/${revKey}`)).statusCode).toBe(404); // other org
+    // Unknown report id → 404.
+    expect((await get('adminA', '/media/reports/r-nope/photos/y.jpg')).statusCode).toBe(404);
   });
 
   it('admin routes: 401 anonymous, 403 non-admin, static token dead when break-glass off', async () => {

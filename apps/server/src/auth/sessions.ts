@@ -3,9 +3,9 @@
  * (sessions.id IS the token) so revoke is a row update. SESSION_TTL_DAYS=0 → indefinite
  * sessions (expires_at = null, D-2 "stay logged in indefinitely"); logout revokes.
  */
-import { randomBytes } from 'node:crypto';
 import type { AppConfig } from '../config.js';
 import type { Repo } from '../db/types.js';
+import { secretToken } from '../ids.js';
 
 export interface SessionManager {
   /** Mint + persist a session; returns the bearer token the SPA stores. */
@@ -34,7 +34,7 @@ export function makeSessions(repo: Repo, config: AppConfig): SessionManager {
 
   return {
     async issue(userId) {
-      const token = `ses_${randomBytes(32).toString('base64url')}`;
+      const token = secretToken('ses');
       const ttlDays = config.auth.sessionTtlDays;
       const expiresAt = ttlDays > 0 ? new Date(Date.now() + ttlDays * 86_400_000) : null;
       await repo.createSession({ id: token, userId, expiresAt });
@@ -55,7 +55,14 @@ export function makeSessions(repo: Repo, config: AppConfig): SessionManager {
       if (Date.now() - last > TOUCH_INTERVAL_MS) {
         lastTouched.set(token, Date.now());
         sweepIfLarge();
-        await repo.touchSession(token);
+        // last_seen_at is a pure optimization (§4.1): NEVER let a transient failure of this
+        // write reject resolve() — the session is already proven valid above, and rejecting
+        // here would (via context.ts's catch) demote a live session to an anonymous 401.
+        try {
+          await repo.touchSession(token);
+        } catch {
+          /* swallow: retried on the next request past the throttle window */
+        }
       }
       return s.userId;
     },

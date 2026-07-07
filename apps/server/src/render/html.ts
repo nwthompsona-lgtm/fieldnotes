@@ -7,13 +7,8 @@ import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { ReportDocument, prettyDate } from './template.js';
 import { REPORT_CSS } from './styles.js';
+import { escapeHtml } from '../html.js';
 import type { ReportRenderModel } from './types.js';
-
-function escapeHtml(s: string): string {
-  return s.replace(/[&<>"]/g, (c) =>
-    c === '&' ? '&amp;' : c === '<' ? '&lt;' : c === '>' ? '&gt;' : '&quot;',
-  );
-}
 
 /**
  * Per-page PDF footer (Chromium displayHeaderFooter template). The hosted HTML view has its

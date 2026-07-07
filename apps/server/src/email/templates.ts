@@ -3,6 +3,8 @@
  * fallbacks), one clear button, always with a text/plain twin. Inline styles only —
  * email clients ignore <style> blocks.
  */
+import { escapeHtml as esc } from '../html.js';
+
 export interface RenderedEmail {
   subject: string;
   html: string;
@@ -14,9 +16,6 @@ const INK = '#1f2937';
 const MUTED = '#6b7280';
 const FONT =
   "'IBM Plex Sans', -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif";
-
-const esc = (s: string): string =>
-  s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 
 /** Shared shell: centered card, header wordmark, CTA button, muted footer line. */
 function shell(args: { heading: string; bodyHtml: string; cta: { label: string; url: string }; footer: string }): string {

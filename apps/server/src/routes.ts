@@ -3,6 +3,7 @@
  * and kicks off async processing; review/finalize is the trust gate; /r/:id(.pdf) is the
  * shareable hosted artifact; /api/admin/* is token-gated raw-vs-polished.
  */
+import { timingSafeEqual } from 'node:crypto';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import {
   UploadManifest,
@@ -19,21 +20,32 @@ import { recordRunFeedback } from './observability.js';
 import { registerAuthRoutes } from './auth/routes.js';
 import { registerInvitationRoutes } from './auth/invitations.js';
 import { bearerToken, requireAuth } from './auth/context.js';
-import { makeAuthz } from './auth/authz.js';
+import type { ReportAccessMeta } from './auth/authz.js';
+
+/** Constant-time string compare (length-guarded — timingSafeEqual requires equal lengths).
+ *  Leaks only length, never a byte-by-byte prefix-match timing signal. */
+function safeEqual(a: string, b: string): boolean {
+  const ab = Buffer.from(a);
+  const bb = Buffer.from(b);
+  return ab.length === bb.length && timingSafeEqual(ab, bb);
+}
 
 export function registerRoutes(app: FastifyInstance, deps: ServerDeps): void {
-  const { repo, storage, config } = deps;
+  const { repo, storage, config, authz } = deps;
   const base = config.publicBaseUrl;
-  const authz = makeAuthz(repo);
 
   // /api/auth/* (signup/login/logout/me — auth plan §4.2) + invitations (Phase 6).
   registerAuthRoutes(app, deps);
   registerInvitationRoutes(app, deps);
 
   /** Break-glass superadmin (§15.3): the static ADMIN_TOKEN sees all orgs, but only
-   *  when explicitly enabled — off by default since Phase 4 re-gated /api/admin/*. */
-  const isBreakGlass = (req: Parameters<typeof bearerToken>[0]): boolean =>
-    config.admin.breakGlass && bearerToken(req) === config.admin.token;
+   *  when explicitly enabled — off by default since Phase 4 re-gated /api/admin/*.
+   *  Constant-time token compare so it isn't a timing oracle when break-glass is on. */
+  const isBreakGlass = (req: FastifyRequest): boolean => {
+    if (!config.admin.breakGlass) return false;
+    const tok = bearerToken(req);
+    return tok != null && safeEqual(tok, config.admin.token);
+  };
 
   // Resolve a stored Report for API consumers: attach hosted html/pdf links and turn
   // each photo's storage key into a displayable URL (contract allows blobRef = key|URL).
@@ -71,6 +83,24 @@ export function registerRoutes(app: FastifyInstance, deps: ServerDeps): void {
     return true;
   };
 
+  // The §6.3 view gate in ONE place: fetch the cheap access-meta (not a full report) and
+  // 404 — never 403 — when the report is missing or unviewable, so ids never leak. Every
+  // read/edit/finalize/hosted route funnels through this, so a new route can't forget it or
+  // accidentally return 403 and turn report-id existence into an oracle. Returns the meta,
+  // or null after it has already sent the 404.
+  const loadViewableReport = async (
+    id: string,
+    req: FastifyRequest,
+    reply: FastifyReply,
+  ): Promise<ReportAccessMeta | null> => {
+    const meta = await repo.getReportViewMeta(id);
+    if (!meta || !(await authz.canViewReport(req, meta))) {
+      await reply.code(404).send({ error: 'not found' });
+      return null;
+    }
+    return meta;
+  };
+
   // Drop the cached html/pdf so the next /r/:id(.pdf) view re-renders from current data.
   const invalidateArtifacts = (id: string): Promise<void> =>
     Promise.all([
@@ -98,38 +128,66 @@ export function registerRoutes(app: FastifyInstance, deps: ServerDeps): void {
   // EXISTING, org-adopted project. Authorship + display name come from the session,
   // not the manifest.
   app.post('/api/upload', { preHandler: requireAuth }, async (req, reply) => {
+    // The capture client sends the manifest FIRST (apps/capture/src/sync.ts), so we parse
+    // + authorize it before buffering any media: a caller with no capture rights on the
+    // project is denied without the server holding a single photo in memory (an authed
+    // viewer could otherwise stream gigabytes to a project they can't touch). If a media
+    // part arrives before the manifest (older client), it is buffered as before.
     let manifestRaw: string | undefined;
+    let parsed: UploadManifest | undefined;
+    let denied = false;
     const files = new Map<string, Uint8Array>();
     for await (const part of req.parts()) {
-      if (part.type === 'file') {
-        const buf = await part.toBuffer();
-        if (part.fieldname === 'manifest') manifestRaw = buf.toString('utf8');
-        else files.set(part.fieldname, new Uint8Array(buf));
-      } else if (part.fieldname === 'manifest') {
-        manifestRaw = String(part.value);
+      if (part.fieldname === 'manifest') {
+        manifestRaw = part.type === 'file' ? (await part.toBuffer()).toString('utf8') : String(part.value);
+        let json: unknown;
+        try {
+          json = JSON.parse(manifestRaw);
+        } catch {
+          json = undefined;
+        }
+        const p = json === undefined ? null : UploadManifest.safeParse(json);
+        if (p?.success) {
+          parsed = p.data;
+          denied = !(await authz.canCapture(req, parsed.projectId));
+        }
+      } else if (part.type === 'file') {
+        // Once denied, drain-and-discard the remaining parts (bounded to one at a time)
+        // rather than retaining them — the forbidden upload buffers nothing.
+        if (denied) {
+          await part.toBuffer();
+          continue;
+        }
+        files.set(part.fieldname, new Uint8Array(await part.toBuffer()));
       }
     }
+
     if (!manifestRaw) return reply.code(400).send({ error: 'missing manifest part' });
-
-    let json: unknown;
-    try {
-      json = JSON.parse(manifestRaw);
-    } catch {
-      return reply.code(400).send({ error: 'manifest is not valid JSON' });
+    if (!parsed) {
+      let json: unknown;
+      try {
+        json = JSON.parse(manifestRaw);
+      } catch {
+        return reply.code(400).send({ error: 'manifest is not valid JSON' });
+      }
+      const p = UploadManifest.safeParse(json);
+      return reply
+        .code(400)
+        .send({ error: 'invalid manifest', issues: p.success ? undefined : p.error.issues });
     }
-    const parsed = UploadManifest.safeParse(json);
-    if (!parsed.success) {
-      return reply.code(400).send({ error: 'invalid manifest', issues: parsed.error.issues });
-    }
+    if (denied) return reply.code(403).send({ error: 'no capture access to this project' });
 
-    if (!(await authz.canCapture(req, parsed.data.projectId))) {
-      return reply.code(403).send({ error: 'no capture access to this project' });
-    }
-    // The session, not the manifest, says who prepared the report.
-    const manifest = { ...parsed.data, superName: req.auth!.user.name ?? parsed.data.superName };
+    // The session, not the manifest, says who prepared the report (empty display name →
+    // fall back to the manifest's superName rather than stamping a blank one).
+    const auth = req.auth!; // requireAuth preHandler guarantees a session here
+    // Empty/absent display name → keep the manifest's superName rather than stamping a blank.
+    const sessionName = auth.user.name?.trim();
+    const superName = sessionName || parsed.superName;
+    const manifest = { ...parsed, superName };
 
-    const result = await processUpload({ manifest, files, storage, repo });
-    await repo.setReportCreatedBy(result.reportId, req.auth!.userId); // fill-if-null
+    // createdBy is written atomically in the report insert (§6.1) — no follow-up UPDATE a
+    // crash could skip and the boot backfill then mis-attribute.
+    const result = await processUpload({ manifest, files, storage, repo, createdBy: auth.userId });
     // Fire-and-forget processing; failures recorded as processing='failed'.
     void runPipeline(deps, result.reportId).catch((err) =>
       app.log.error({ err, reportId: result.reportId }, 'pipeline failed'),
@@ -154,12 +212,12 @@ export function registerRoutes(app: FastifyInstance, deps: ServerDeps): void {
       const all = await repo.listReportsForProject(projectId);
       const visible = [];
       for (const r of all) if (await authz.canViewReport(req, r)) visible.push(r);
-      // Per-row rollup is 2 small queries each — fine at pilot scale; batch when the
-      // list view grows (getReportLatestSendSummary batching noted in the plan).
+      // One batched rollup for the whole list (2 queries total) instead of 2-per-row.
+      const sends = await repo.getLatestSendSummaries(visible.map((r) => r.id));
       return Promise.all(
         visible.map(async (r) => ({
           ...(await resolveReport(r)),
-          lastSend: await repo.getReportLatestSendSummary(r.id),
+          lastSend: sends.get(r.id) ?? null,
         })),
       );
     },
@@ -182,10 +240,8 @@ export function registerRoutes(app: FastifyInstance, deps: ServerDeps): void {
     '/api/reports/:id/status',
     { preHandler: requireAuth },
     async (req, reply) => {
-      const r = await repo.getReport(req.params.id);
-      if (!r || !(await authz.canViewReport(req, r))) {
-        return reply.code(404).send({ error: 'not found' });
-      }
+      // Hot polling path: authorize from the cheap access-meta, not a full assembly.
+      if (!(await loadViewableReport(req.params.id, req, reply))) return reply;
       return repo.getReportStatus(req.params.id);
     },
   );
@@ -196,11 +252,9 @@ export function registerRoutes(app: FastifyInstance, deps: ServerDeps): void {
     '/api/reports/:id',
     { preHandler: requireAuth },
     async (req, reply) => {
-    const existing = await repo.getReport(req.params.id);
-    if (!existing || !(await authz.canViewReport(req, existing))) {
-      return reply.code(404).send({ error: 'not found' });
-    }
-    if (!(await authz.canEditReport(req, existing))) {
+    const meta = await loadViewableReport(req.params.id, req, reply);
+    if (!meta) return reply;
+    if (!(await authz.canEditReport(req, meta))) {
       return reply.code(403).send({ error: 'forbidden' });
     }
     const parsed = ReportEdit.safeParse(req.body);
@@ -253,11 +307,9 @@ export function registerRoutes(app: FastifyInstance, deps: ServerDeps): void {
     '/api/reports/:id/finalize',
     { preHandler: requireAuth },
     async (req, reply) => {
-    const existing = await repo.getReport(req.params.id);
-    if (!existing || !(await authz.canViewReport(req, existing))) {
-      return reply.code(404).send({ error: 'not found' });
-    }
-    if (!(await authz.canFinalize(req, existing))) {
+    const meta = await loadViewableReport(req.params.id, req, reply);
+    if (!meta) return reply;
+    if (!(await authz.canFinalize(req, meta))) {
       return reply.code(403).send({ error: 'forbidden' });
     }
     await renderAndStore(deps, req.params.id, true);
@@ -276,22 +328,12 @@ export function registerRoutes(app: FastifyInstance, deps: ServerDeps): void {
   // ── Hosted artifacts ────────────────────────────────────────────────────────
   // §6.6: /r/:id is now INTERNAL (session + canViewReport; used by the web app's
   // view/preview). External recipients get capability URLs at /s/:token in Phase 8 —
-  // do not reopen /r. 404 on no-access to avoid leaking report ids.
-  const guardReportView = async (req: FastifyRequest, reply: FastifyReply): Promise<boolean> => {
-    const id = (req.params as { id: string }).id;
-    const r = await repo.getReport(id);
-    if (!r || !(await authz.canViewReport(req, r))) {
-      await reply.code(404).send({ error: 'not found' });
-      return false;
-    }
-    return true;
-  };
-
+  // do not reopen /r. 404 on no-access (via loadViewableReport) to avoid leaking ids.
   app.get<{ Params: { id: string } }>(
     '/r/:id',
     { preHandler: requireAuth },
     async (req, reply) => {
-      if (!(await guardReportView(req, reply))) return reply;
+      if (!(await loadViewableReport(req.params.id, req, reply))) return reply;
       if (!(await ensureArtifacts(req.params.id))) {
         reply.type('text/html');
         return processingPage(req.params.id, base);
@@ -306,7 +348,7 @@ export function registerRoutes(app: FastifyInstance, deps: ServerDeps): void {
     '/r/:id.pdf',
     { preHandler: requireAuth },
     async (req, reply) => {
-      if (!(await guardReportView(req, reply))) return reply;
+      if (!(await loadViewableReport(req.params.id, req, reply))) return reply;
       if (!(await ensureArtifacts(req.params.id))) return reply.code(425).send({ error: 'not ready' });
       const obj = await storage.get(storageKeys.pdf(req.params.id));
       reply
@@ -318,18 +360,23 @@ export function registerRoutes(app: FastifyInstance, deps: ServerDeps): void {
   );
 
   // ── Media (local-disk driver serves bytes here; S3/R2 returns signed URLs) ──
-  // §6.7: rendered HTML/PDF embed photos as data-URLs, so only the admin raw-view
-  // needs these bytes — gate behind org-admin (or break-glass). Private cache: the
-  // response now varies by authorization.
+  // §6.7: this route is the LOCAL-DISK path only — prod R2 hands out signed URLs that the
+  // browser loads directly (no bearer needed), and hosted HTML/PDF embed photos as
+  // data-URLs. Gate each object by the SAME viewability as the report it belongs to
+  // (key = reports/<reportId>/...): any pm/super/viewer/admin who can see the report can
+  // load its media, not just org-admins. 404 (not 403) when unviewable so keys don't leak.
   app.get('/media/*', async (req, reply) => {
+    const key = (req.params as Record<string, string>)['*'];
+    if (!key) return reply.code(404).send({ error: 'not found' });
     if (!isBreakGlass(req)) {
       if (!req.auth) return reply.code(401).send({ error: 'unauthorized' });
-      if (!(await authz.adminOrgIds(req)).length) {
-        return reply.code(403).send({ error: 'forbidden' });
+      const m = /^reports\/([^/]+)\//.exec(key);
+      const meta = m ? await repo.getReportViewMeta(m[1]!) : null;
+      if (!meta || !(await authz.canViewReport(req, meta))) {
+        return reply.code(404).send({ error: 'not found' });
       }
     }
-    const key = (req.params as Record<string, string>)['*'];
-    if (!key || !(await storage.exists(key))) return reply.code(404).send({ error: 'not found' });
+    if (!(await storage.exists(key))) return reply.code(404).send({ error: 'not found' });
     const obj = await storage.get(key);
     reply.type(obj.contentType).header('cache-control', 'private, max-age=31536000, immutable');
     return reply.send(Buffer.from(obj.bytes));
@@ -368,13 +415,15 @@ export function registerRoutes(app: FastifyInstance, deps: ServerDeps): void {
     });
 
     admin.get<{ Params: { id: string } }>('/api/admin/reports/:id', async (req, reply) => {
-      const report = await repo.getReport(req.params.id);
-      if (!report) return reply.code(404).send({ error: 'not found' });
+      // Enforce org scope BEFORE assembling the report, so a cross-org id returns the same
+      // cheap 404 as a non-existent one — no assembly-time timing oracle for existence.
       const scope = await adminScope(req);
       if (scope !== null) {
         const orgId = await repo.getReportOrgId(req.params.id);
         if (!orgId || !scope.includes(orgId)) return reply.code(404).send({ error: 'not found' });
       }
+      const report = await repo.getReport(req.params.id);
+      if (!report) return reply.code(404).send({ error: 'not found' });
       const proc = await repo.getProcessingObservations(req.params.id);
       const audioByObs = new Map(proc.map((o) => [o.id, o.audioKey] as const));
 

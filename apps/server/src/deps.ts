@@ -14,6 +14,7 @@ import { makeStorage } from './storage/index.js';
 import { makeTranscriber } from './stt/index.js';
 import { makeSynthesizer } from './synthesis/index.js';
 import { makeSessions, type SessionManager } from './auth/sessions.js';
+import { makeAuthz, type Authz } from './auth/authz.js';
 import { makeEmail, type EmailDriver } from './email/index.js';
 import { hash } from './auth/passwords.js';
 import { newId } from './ids.js';
@@ -27,6 +28,7 @@ export interface ServerDeps {
   transcriber: Transcriber;
   synthesizer: Synthesizer;
   sessions: SessionManager;
+  authz: Authz;
   email: EmailDriver;
 }
 
@@ -51,6 +53,9 @@ export async function seedPilot(
   });
 
   // 2. Pilot admin user (email+password from env; §15.5 — rotate after first login).
+  //    Identity is keyed on the email: rotating PILOT_SUPER_EMAIL between boots creates a
+  //    NEW admin and leaves the old account intact (it can still log in with its old
+  //    password). Revoke the previous admin by hand when rotating (ops caveat, §15.5).
   let pilotUserId: string | null = null;
   if (config.pilot.superEmail) {
     const existing = await repo.getUserByEmail(config.pilot.superEmail);
@@ -80,10 +85,15 @@ export async function seedPilot(
     }
   }
 
-  // 3. Adopt pre-tenancy projects (org_id IS NULL → the pilot org), then make sure the
-  //    pilot admin is on the pilot project as its super (they're org admin anyway, but
-  //    the explicit row keeps the matrix honest and survives a role downgrade).
-  await repo.adoptOrphanProjects(config.pilot.orgId);
+  // 3. Adopt pre-tenancy projects (org_id IS NULL → the pilot org) — but ONLY while the
+  //    pilot org is the sole tenant. Once self-serve signup has created real second orgs,
+  //    a blanket "adopt every org-less project" would risk absorbing another tenant's
+  //    transiently-null-org project into the pilot org, so stop and let such a row surface.
+  //    Then make sure the pilot admin is the pilot project's super (explicit row keeps the
+  //    §5 matrix honest and survives a role downgrade).
+  if ((await repo.countOrgs()) <= 1) {
+    await repo.adoptOrphanProjects(config.pilot.orgId);
+  }
   if (pilotUserId && !(await repo.getProjectRole(config.pilot.projectId, pilotUserId))) {
     await repo.addProjectMember({
       id: newId('pm'),
@@ -93,8 +103,9 @@ export async function seedPilot(
     });
   }
 
-  // 4. Backfill authorship on pre-auth reports (created_by IS NULL only).
-  if (pilotUserId) await repo.backfillReportsCreatedBy(pilotUserId);
+  // 4. Backfill authorship on pre-auth reports (created_by IS NULL), scoped to the pilot
+  //    org so a null-author report in another tenant is never attributed to the pilot admin.
+  if (pilotUserId) await repo.backfillReportsCreatedBy(pilotUserId, config.pilot.orgId);
 }
 
 export async function buildDeps(config: AppConfig): Promise<ServerDeps> {
@@ -112,6 +123,7 @@ export async function buildDeps(config: AppConfig): Promise<ServerDeps> {
     transcriber: makeTranscriber(config),
     synthesizer: makeSynthesizer(config),
     sessions: makeSessions(repo, config),
+    authz: makeAuthz(repo),
     email: makeEmail(config),
   };
 }

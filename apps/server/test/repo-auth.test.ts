@@ -60,7 +60,7 @@ describe('identity (users)', () => {
   });
 
   it('sets a password hash', async () => {
-    await repo.setUserPassword('usr_1', 'argon2-hash-here');
+    await repo.updateUser('usr_1', { passwordHash: 'argon2-hash-here' });
     expect((await repo.getUserById('usr_1'))?.passwordHash).toBe('argon2-hash-here');
   });
 

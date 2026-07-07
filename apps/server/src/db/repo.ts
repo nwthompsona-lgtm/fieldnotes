@@ -17,7 +17,7 @@ import type {
 import type { SynthesisOutput } from '../synthesis/types.js';
 import type { Db } from './client.js';
 import type { IngestMediaKeys, ProcessingObservation, Repo } from './types.js';
-import { reportIdForWalk, newId } from '../ids.js';
+import { reportIdForWalk, newId, normalizeEmail } from '../ids.js';
 import {
   projects,
   reports,
@@ -43,8 +43,9 @@ import {
 const iso = (v: Date | string): string =>
   v instanceof Date ? v.toISOString() : new Date(v).toISOString();
 
-/** Emails are normalized lowercase at this layer (unique index is on lower(email)). */
-const normEmail = (email: string): string => email.trim().toLowerCase();
+/** Emails are normalized lowercase at this layer (unique index is on lower(email)). The
+ *  rule itself lives in ids.ts so every producer (routes, comparisons) agrees with it. */
+const normEmail = normalizeEmail;
 
 const mapProject = (p: ProjectRow): Project => ({
   id: p.id,
@@ -156,12 +157,66 @@ export function makeRepo(db: Db): Repo {
         } satisfies Report,
       ]),
     );
-    return reportIds.map((id) => byId.get(id)).filter((r): r is Report => r != null);
+    // Emit one report per DISTINCT requested id, preserving first-seen order. Dedup here so
+    // a caller that passes a unioned/duplicated id list can never get aliased (shared-ref)
+    // Report objects back — the batch adapter returns a set, not a bag.
+    const seen = new Set<string>();
+    const out: Report[] = [];
+    for (const id of reportIds) {
+      if (seen.has(id)) continue;
+      seen.add(id);
+      const r = byId.get(id);
+      if (r) out.push(r);
+    }
+    return out;
   }
 
   async function assembleReport(id: string): Promise<Report | null> {
     return (await assembleReportsBatch([id]))[0] ?? null;
   }
+
+  /** Shared shaping for the quality rollup so the unscoped (break-glass) and org-scoped
+   *  metrics paths run their own SQL but never fork the mapping. */
+  type QualityReportRow = {
+    id: string;
+    runId: string | null;
+    status: Report['status'];
+    processing: ProcessingStatus;
+    createdAt: Date;
+    summary: string;
+    aiSummary: string | null;
+  };
+  type QualityObsRow = {
+    reportId: string;
+    id: string;
+    ord: number;
+    cleanedDescription: string | null;
+    aiCleanedDescription: string | null;
+    transcriptConfidence: number | null;
+  };
+  const shapeQuality = (rs: QualityReportRow[], allObs: QualityObsRow[]) => {
+    const byReport = new Map<string, QualityObsRow[]>();
+    for (const o of allObs) {
+      const list = byReport.get(o.reportId) ?? [];
+      list.push(o);
+      byReport.set(o.reportId, list);
+    }
+    return rs.map((r) => ({
+      id: r.id,
+      runId: r.runId ?? null,
+      status: r.status,
+      processing: r.processing,
+      createdAt: iso(r.createdAt),
+      summary: r.summary,
+      aiSummary: r.aiSummary ?? null,
+      observations: (byReport.get(r.id) ?? []).map((o) => ({
+        id: o.id,
+        cleanedDescription: o.cleanedDescription ?? null,
+        aiCleanedDescription: o.aiCleanedDescription ?? null,
+        transcriptConfidence: o.transcriptConfidence ?? null,
+      })),
+    }));
+  };
 
   const api: Repo = {
     async getProject(id) {
@@ -202,7 +257,7 @@ export function makeRepo(db: Db): Repo {
         });
     },
 
-    async createReportFromUpload(manifest: UploadManifest, media: IngestMediaKeys) {
+    async createReportFromUpload(manifest: UploadManifest, media: IngestMediaKeys, opts) {
       const reportId = reportIdForWalk(manifest.walkId);
       return db.transaction(async (tx) => {
         const existing = (
@@ -222,6 +277,9 @@ export function makeRepo(db: Db): Repo {
           walkId: manifest.walkId,
           date: manifest.date,
           superName: manifest.superName,
+          // Author is stamped in the SAME insert as the report — never a follow-up UPDATE
+          // that a crash could skip (§6.1). Null for author-less callers (dryrun/scripts).
+          createdBy: opts?.createdBy ?? null,
           processing: 'uploaded',
           status: 'draft',
         });
@@ -272,6 +330,20 @@ export function makeRepo(db: Db): Repo {
       )[0];
       if (!r) return null;
       return { status: r.status, processing: r.processing, error: r.error ?? undefined };
+    },
+
+    async getReportViewMeta(id) {
+      // The three columns every authz predicate reads — a single narrow row, so the hot
+      // status-poll + hosted-view guards never assemble the whole report just to authorize.
+      const r = (
+        await db
+          .select({ id: reports.id, projectId: reports.projectId, status: reports.status, createdBy: reports.createdBy })
+          .from(reports)
+          .where(eq(reports.id, id))
+          .limit(1)
+      )[0];
+      if (!r) return null;
+      return { id: r.id, projectId: r.projectId, status: r.status, createdBy: r.createdBy ?? undefined };
     },
 
     async listReports() {
@@ -458,27 +530,7 @@ export function makeRepo(db: Db): Repo {
         })
         .from(observations)
         .orderBy(asc(observations.ord));
-      const byReport = new Map<string, typeof allObs>();
-      for (const o of allObs) {
-        const list = byReport.get(o.reportId) ?? [];
-        list.push(o);
-        byReport.set(o.reportId, list);
-      }
-      return rs.map((r) => ({
-        id: r.id,
-        runId: r.runId ?? null,
-        status: r.status,
-        processing: r.processing,
-        createdAt: iso(r.createdAt),
-        summary: r.summary,
-        aiSummary: r.aiSummary ?? null,
-        observations: (byReport.get(r.id) ?? []).map((o) => ({
-          id: o.id,
-          cleanedDescription: o.cleanedDescription ?? null,
-          aiCleanedDescription: o.aiCleanedDescription ?? null,
-          transcriptConfidence: o.transcriptConfidence ?? null,
-        })),
-      }));
+      return shapeQuality(rs, allObs);
     },
 
     // --- auth + multi-tenancy + distribution (AUTH_MULTITENANCY_PLAN.md §3) ---
@@ -526,10 +578,6 @@ export function makeRepo(db: Db): Repo {
     async getUserById(id) {
       const r = (await db.select().from(users).where(eq(users.id, id)).limit(1))[0];
       return r ?? null;
-    },
-
-    async setUserPassword(id, passwordHash) {
-      await db.update(users).set({ passwordHash }).where(eq(users.id, id));
     },
 
     async updateUser(id, patch) {
@@ -834,23 +882,67 @@ export function makeRepo(db: Db): Repo {
         .onConflictDoUpdate({ target: orgs.id, set: { name: o.name } });
     },
 
+    async countOrgs() {
+      const r = (await db.select({ c: sql<number>`count(*)::int` }).from(orgs))[0];
+      return Number(r?.c ?? 0);
+    },
+
     async adoptOrphanProjects(orgId) {
       await db.update(projects).set({ orgId }).where(isNull(projects.orgId));
     },
 
-    async backfillReportsCreatedBy(userId) {
-      await db.update(reports).set({ createdBy: userId }).where(isNull(reports.createdBy));
+    async backfillReportsCreatedBy(userId, orgId) {
+      // Scope the fill-if-null to THIS org's projects: a null-author report belonging to any
+      // other tenant must never be silently attributed to this org's user (§12). Without the
+      // org bound, a future null-author row anywhere would be permanently mis-stamped.
+      await db
+        .update(reports)
+        .set({ createdBy: userId })
+        .where(
+          and(
+            isNull(reports.createdBy),
+            inArray(
+              reports.projectId,
+              db.select({ id: projects.id }).from(projects).where(eq(projects.orgId, orgId)),
+            ),
+          ),
+        );
     },
 
     async listReportQualityForOrgs(orgIds) {
       if (!orgIds.length) return [];
-      const scoped = await db
-        .select({ id: reports.id })
+      // Scope in SQL (join projects, filter org) instead of loading every report+observation
+      // in the DB and filtering in JS — cost tracks the caller's orgs, not total table size.
+      const rs = await db
+        .select({
+          id: reports.id,
+          runId: reports.langsmithRunId,
+          status: reports.status,
+          processing: reports.processing,
+          createdAt: reports.createdAt,
+          summary: reports.summary,
+          aiSummary: reports.aiSummary,
+        })
         .from(reports)
         .innerJoin(projects, eq(reports.projectId, projects.id))
-        .where(inArray(projects.orgId, orgIds));
-      const ids = new Set(scoped.map((r) => r.id));
-      return (await api.listReportQuality()).filter((q) => ids.has(q.id));
+        .where(inArray(projects.orgId, orgIds))
+        .orderBy(desc(reports.createdAt));
+      if (!rs.length) return [];
+      const allObs = await db
+        .select({
+          reportId: observations.reportId,
+          id: observations.id,
+          ord: observations.ord,
+          cleanedDescription: observations.cleanedDescription,
+          aiCleanedDescription: observations.aiCleanedDescription,
+          transcriptConfidence: observations.transcriptConfidence,
+        })
+        .from(observations)
+        .innerJoin(reports, eq(observations.reportId, reports.id))
+        .innerJoin(projects, eq(reports.projectId, projects.id))
+        .where(inArray(projects.orgId, orgIds))
+        .orderBy(asc(observations.ord));
+      return shapeQuality(rs, allObs);
     },
 
     // stakeholder directory
@@ -1109,29 +1201,44 @@ export function makeRepo(db: Db): Repo {
     },
 
     async getReportLatestSendSummary(reportId) {
-      const latest = (
-        await db
-          .select({ id: reportSends.id, sentAt: reportSends.sentAt })
-          .from(reportSends)
-          .where(eq(reportSends.reportId, reportId))
-          .orderBy(desc(reportSends.sentAt))
-          .limit(1)
-      )[0];
-      if (!latest) return null;
-      const counts = (
-        await db
-          .select({
-            total: sql<number>`count(*)::int`,
-            opened: sql<number>`count(${reportSendRecipients.firstOpenedAt})::int`,
-          })
-          .from(reportSendRecipients)
-          .where(eq(reportSendRecipients.sendId, latest.id))
-      )[0];
-      return {
-        sentAt: iso(latest.sentAt),
-        opened: Number(counts?.opened ?? 0),
-        total: Number(counts?.total ?? 0),
-      };
+      return (await api.getLatestSendSummaries([reportId])).get(reportId) ?? null;
+    },
+
+    async getLatestSendSummaries(reportIds) {
+      const out = new Map<string, { sentAt: string; opened: number; total: number }>();
+      if (!reportIds.length) return out;
+      // 2 queries for any number of reports (was 2 PER report): all sends for these reports
+      // newest-first — first seen per report is its latest — then recipient counts for those.
+      const sends = await db
+        .select({ reportId: reportSends.reportId, id: reportSends.id, sentAt: reportSends.sentAt })
+        .from(reportSends)
+        .where(inArray(reportSends.reportId, reportIds))
+        .orderBy(desc(reportSends.sentAt));
+      const latestByReport = new Map<string, { id: string; sentAt: Date | string }>();
+      for (const s of sends) {
+        if (!latestByReport.has(s.reportId)) latestByReport.set(s.reportId, { id: s.id, sentAt: s.sentAt });
+      }
+      if (!latestByReport.size) return out;
+      const sendIds = [...latestByReport.values()].map((s) => s.id);
+      const counts = await db
+        .select({
+          sendId: reportSendRecipients.sendId,
+          total: sql<number>`count(*)::int`,
+          opened: sql<number>`count(${reportSendRecipients.firstOpenedAt})::int`,
+        })
+        .from(reportSendRecipients)
+        .where(inArray(reportSendRecipients.sendId, sendIds))
+        .groupBy(reportSendRecipients.sendId);
+      const countBySend = new Map(counts.map((c) => [c.sendId, c]));
+      for (const [reportId, s] of latestByReport) {
+        const c = countBySend.get(s.id);
+        out.set(reportId, {
+          sentAt: iso(s.sentAt),
+          opened: Number(c?.opened ?? 0),
+          total: Number(c?.total ?? 0),
+        });
+      }
+      return out;
     },
   };
   return api;

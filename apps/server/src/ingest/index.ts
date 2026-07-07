@@ -18,6 +18,10 @@ export interface ProcessUploadArgs {
   files: Map<string, Uint8Array>;
   storage: StorageDriver;
   repo: Repo;
+  /** Authenticated uploader (the session's user). Written atomically as the report's
+   *  author on first insert (§6.1) so a crash can't leave created_by null for the boot
+   *  backfill to mis-attribute. Omitted by author-less callers (dryrun/scripts). */
+  createdBy?: string;
 }
 
 /** EXIF-correct (auto-rotate), bound dimensions, re-encode JPEG. Returns bytes + dims. */
@@ -76,7 +80,7 @@ export async function processUpload(args: ProcessUploadArgs): Promise<UploadResu
     });
   }
 
-  const result = await repo.createReportFromUpload(manifest, media);
+  const result = await repo.createReportFromUpload(manifest, media, { createdBy: args.createdBy });
   return {
     reportId: result.reportId,
     walkId: manifest.walkId,

@@ -189,7 +189,7 @@ describe('edge cases', () => {
     expect((await deps.repo.getUserById('usr_pending'))?.name).toBe('Now Active');
   });
 
-  it('ACTIVE account: invite adds the membership but never touches credentials', async () => {
+  it('ACTIVE account: invite adds the membership but never logs the token holder in', async () => {
     await deps.repo.createUser({
       id: 'usr_active',
       email: 'active@example.com',
@@ -202,9 +202,15 @@ describe('edge cases', () => {
       url: '/api/auth/invitations/accept',
       payload: { token: inv.token, name: 'Attacker Name', password: 'attackerpass1' },
     });
-    expect(acc.statusCode).toBe(200); // membership added, session issued…
+    // Membership added, but NO session is minted for the token holder (account-takeover
+    // guard): the response says "log in", it carries no bearer token.
+    expect(acc.statusCode).toBe(200);
+    const body = acc.json();
+    expect(body.requiresLogin).toBe(true);
+    expect(body.email).toBe('active@example.com');
+    expect(body.token).toBeUndefined();
 
-    // …but the original credentials and profile stand.
+    // The original credentials and profile stand; the attacker's password never works.
     expect((await deps.repo.getUserById('usr_active'))?.name).toBe('Original Name');
     const oldPw = await app.inject({
       method: 'POST',
@@ -219,6 +225,23 @@ describe('edge cases', () => {
     });
     expect(newPw.statusCode).toBe(401);
     expect(await deps.repo.getMembership('usr_active', 'org_i')).toEqual({ orgRole: 'admin' });
+  });
+
+  it('concurrent double-accept of one fresh token is race-safe (no 500)', async () => {
+    await deps.repo.createUser({ id: 'usr_pending2', email: 'race@example.com', name: 'Race' });
+    const inv = (await create(adminTok, { email: 'race@example.com' })).json();
+    const accept = () =>
+      app.inject({
+        method: 'POST',
+        url: '/api/auth/invitations/accept',
+        payload: { token: inv.token, name: 'Race Winner', password: 'racepass1234' },
+      });
+    // Fire both at once: the unique-email race must not surface as a 500. One wins with a
+    // 200; the token is single-use so the other is 200 (activated) or 410 (already used).
+    const [a, b] = await Promise.all([accept(), accept()]);
+    expect([a.statusCode, b.statusCode].every((c) => c === 200 || c === 410)).toBe(true);
+    expect(a.statusCode).not.toBe(500);
+    expect(b.statusCode).not.toBe(500);
   });
 
   it('invalid accept body → 400', async () => {

@@ -2,58 +2,33 @@
  * Auth endpoints (auth plan §4.2): signup / login / logout / me. Signup is self-serve
  * onboarding (D-5): creates the user + their org + an admin membership in one
  * transaction, then issues a session. Login is generic-401 on any failure (no
- * user-enumeration — including by timing; see DUMMY_HASH). Passwords are never logged;
+ * user-enumeration — including by timing; see dummyHash). Passwords are never logged;
  * PublicUser is the only user shape returned.
  */
-import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
+import type { FastifyInstance } from 'fastify';
 import { SignupRequest, LoginRequest, type AuthResponse, type Me } from '@fieldreport/contracts';
 import type { ServerDeps } from '../deps.js';
-import type { UserRow } from '../db/types.js';
-import { newId } from '../ids.js';
+import { newId, normalizeEmail } from '../ids.js';
+import { isUniqueViolation } from '../db/errors.js';
 import { hash, verify } from './passwords.js';
 import { bearerToken, requireAuth } from './context.js';
+import { throttle } from './throttle.js';
+import { publicUser, buildAuthResponse } from './identity.js';
 
-// Basic per-IP fixed-window throttle on the credential endpoints (§11; ops upgrade
-// path: @fastify/rate-limit behind a real store once there's more than one instance).
-// req.ip is the real client because app.ts sets trustProxy.
-const WINDOW_MS = 5 * 60_000;
-const MAX_ATTEMPTS = 30;
-/** Above this, expired windows get swept so rotating-IP sweeps can't grow the Map forever. */
-const BUCKETS_SWEEP_SIZE = 10_000;
-const buckets = new Map<string, { count: number; resetAt: number }>();
-
-/** Shared by the invitation routes (§4.2 rate-limits signup/login/accept alike). */
-export async function throttle(req: FastifyRequest, reply: FastifyReply): Promise<void> {
-  const key = `${req.ip}:${req.routeOptions.url ?? req.url}`;
-  const now = Date.now();
-  const b = buckets.get(key);
-  if (!b || b.resetAt < now) {
-    if (buckets.size > BUCKETS_SWEEP_SIZE) {
-      for (const [k, v] of buckets) if (v.resetAt < now) buckets.delete(k);
-    }
-    buckets.set(key, { count: 1, resetAt: now + WINDOW_MS });
-    return;
-  }
-  b.count += 1;
-  if (b.count > MAX_ATTEMPTS) {
-    await reply.code(429).send({ error: 'too many attempts, try again later' });
-  }
+/** Real argon2 hash of a random throwaway secret, computed lazily and memoized. Login
+ *  verifies against this when the account doesn't exist (or has no password), so unknown
+ *  emails cost the same ~100ms as wrong passwords — otherwise response timing is a
+ *  user-enumeration oracle. Lazy (not module-load) so it adds no startup cost and can't
+ *  become a stored unhandled rejection; the login handler treats any verify error as a
+ *  generic 401, so even a degraded argon binding never turns into an enumeration signal. */
+let dummyHashPromise: Promise<string> | null = null;
+function dummyHash(): Promise<string> {
+  if (!dummyHashPromise) dummyHashPromise = hash(`dummy-${newId('tmg')}`);
+  return dummyHashPromise;
 }
-
-/** Real argon2 hash of a random throwaway secret. Login verifies against this when the
- *  account doesn't exist (or has no password), so unknown emails cost the same ~100ms
- *  as wrong passwords — otherwise response timing is a user-enumeration oracle. */
-const DUMMY_HASH = hash(`dummy-${newId('tmg')}`);
-
-const isUniqueViolation = (err: unknown): boolean => {
-  const e = err as { code?: string; message?: string } | null;
-  return e?.code === '23505' || /unique|duplicate key/i.test(e?.message ?? '');
-};
 
 export function registerAuthRoutes(app: FastifyInstance, deps: ServerDeps): void {
   const { repo, sessions } = deps;
-
-  const publicUser = (user: UserRow) => ({ id: user.id, email: user.email, name: user.name });
 
   app.post('/api/auth/signup', { preHandler: throttle }, async (req, reply) => {
     const parsed = SignupRequest.safeParse(req.body);
@@ -89,7 +64,7 @@ export function registerAuthRoutes(app: FastifyInstance, deps: ServerDeps): void
     const body: AuthResponse = {
       token,
       // All fields are in hand — no re-fetch. Email mirrors the repo's normalization.
-      user: { id: userId, email: email.trim().toLowerCase(), name },
+      user: publicUser({ id: userId, email: normalizeEmail(email), name }),
       orgs: [{ id: orgId, name: orgName, role: 'admin' }],
     };
     return reply.code(201).send(body);
@@ -103,19 +78,20 @@ export function registerAuthRoutes(app: FastifyInstance, deps: ServerDeps): void
     const { email, password } = parsed.data;
 
     // Same generic 401 for unknown email, no password set, and wrong password — and the
-    // same argon2 cost for all three (verify against DUMMY_HASH when there's no real one).
+    // same argon2 cost for all three (verify against dummyHash when there's no real one).
+    // Any verify error (e.g. a degraded argon binding) also collapses to 401, so a failure
+    // never distinguishes unknown-email from wrong-password.
     const user = await repo.getUserByEmail(email);
-    const ok = await verify(user?.passwordHash ?? (await DUMMY_HASH), password);
+    let ok = false;
+    try {
+      ok = await verify(user?.passwordHash ?? (await dummyHash()), password);
+    } catch (err) {
+      req.log.error({ err }, 'password verify failed');
+    }
     if (!user?.passwordHash || !ok) {
       return reply.code(401).send({ error: 'invalid credentials' });
     }
-    const token = await sessions.issue(user.id);
-    const body: AuthResponse = {
-      token,
-      user: publicUser(user),
-      orgs: await repo.listOrgsForUser(user.id),
-    };
-    return body;
+    return buildAuthResponse(deps, user);
   });
 
   app.post('/api/auth/logout', { preHandler: requireAuth }, async (req, reply) => {

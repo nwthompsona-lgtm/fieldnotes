@@ -50,23 +50,43 @@ async function makePhoto(n: number): Promise<Uint8Array> {
   );
 }
 
+async function login(): Promise<string> {
+  const email = process.env.PILOT_SUPER_EMAIL;
+  const password = process.env.PILOT_SUPER_PASSWORD;
+  if (!email || !password) {
+    throw new Error('Set PILOT_SUPER_EMAIL and PILOT_SUPER_PASSWORD (the seeded pilot admin).');
+  }
+  const res = await fetch(`${BASE}/api/auth/login`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ email, password }),
+  });
+  if (!res.ok) throw new Error(`login failed: HTTP ${res.status} (check pilot creds).`);
+  return ((await res.json()) as { token: string }).token;
+}
+
 async function main() {
   await mkdir(tmp, { recursive: true });
   console.log(`[e2e] target ${BASE}`);
   console.log('[e2e] health', await (await fetch(`${BASE}/healthz`)).json());
 
+  // The API is authenticated since Phase 4 — log in as the pilot admin and send the session
+  // bearer on every call (upload to the pilot project needs capture rights).
+  const token = await login();
+  const authHdr = { authorization: `Bearer ${token}` };
+
   const walkId = `e2e-${Date.now()}`;
   const nonce = Date.now().toString(36); // run-unique so ids never collide on the persistent DB
-  const fd = new FormData();
   const observations = [];
+  const media: Array<{ field: string; blob: Blob; name: string }> = [];
   for (let k = 0; k < PICK.length; k++) {
     const text = MOCK_TRANSCRIPTS[PICK[k]!]!;
     const oid = `e2e-obs-${nonce}-${k}`;
     const pid = `e2e-photo-${nonce}-${k}`;
     console.log(`[e2e] synthesizing speech #${k + 1}: "${text.slice(0, 56)}…"`);
     const wav = await ttsWav(text, resolve(tmp, `${oid}.wav`));
-    fd.set(pid, new Blob([await makePhoto(k)], { type: 'image/jpeg' }), `${pid}.jpg`);
-    fd.set(audioFieldFor(oid), new Blob([wav], { type: 'audio/wav' }), `${oid}.wav`);
+    media.push({ field: pid, blob: new Blob([await makePhoto(k)], { type: 'image/jpeg' }), name: `${pid}.jpg` });
+    media.push({ field: audioFieldFor(oid), blob: new Blob([wav], { type: 'audio/wav' }), name: `${oid}.wav` });
     observations.push({
       id: oid,
       order: k,
@@ -76,6 +96,8 @@ async function main() {
       audioMime: 'audio/wav',
     });
   }
+  // Manifest FIRST so the server authorizes before buffering the (real, larger) media.
+  const fd = new FormData();
   fd.set(
     'manifest',
     JSON.stringify({
@@ -87,9 +109,10 @@ async function main() {
       observations,
     }),
   );
+  for (const m of media) fd.set(m.field, m.blob, m.name);
 
   console.log('[e2e] uploading real audio + photos…');
-  const up = await fetch(`${BASE}/api/upload`, { method: 'POST', body: fd });
+  const up = await fetch(`${BASE}/api/upload`, { method: 'POST', headers: authHdr, body: fd });
   const upj = await up.json();
   if (up.status !== 202) {
     console.error('[e2e] upload failed', up.status, upj);
@@ -100,7 +123,7 @@ async function main() {
 
   let st: { processing?: string; error?: string } = {};
   for (let i = 0; i < 120; i++) {
-    st = await (await fetch(`${BASE}/api/reports/${reportId}/status`)).json();
+    st = await (await fetch(`${BASE}/api/reports/${reportId}/status`, { headers: authHdr })).json();
     if (st.processing === 'ready' || st.processing === 'failed') break;
     await sleep(2000);
   }
@@ -110,7 +133,7 @@ async function main() {
     process.exit(1);
   }
 
-  const rep = await (await fetch(`${BASE}/api/reports/${reportId}`)).json();
+  const rep = await (await fetch(`${BASE}/api/reports/${reportId}`, { headers: authHdr })).json();
   console.log('\n━━━ REAL DEEPGRAM TRANSCRIPT  vs  REAL CLAUDE WRITE-UP ━━━\n');
   for (const o of rep.observations) {
     const tags = [o.trade, o.area].filter(Boolean).join(' · ');
@@ -120,8 +143,8 @@ async function main() {
   }
   console.log('SUMMARY:', rep.summary);
 
-  await fetch(`${BASE}/api/reports/${reportId}/finalize`, { method: 'POST' });
-  const pdf = await fetch(`${BASE}/r/${reportId}.pdf`);
+  await fetch(`${BASE}/api/reports/${reportId}/finalize`, { method: 'POST', headers: authHdr });
+  const pdf = await fetch(`${BASE}/r/${reportId}.pdf`, { headers: authHdr });
   const pdfLen = (await pdf.arrayBuffer()).byteLength;
   console.log(`\n[e2e] hosted report : ${BASE}/r/${reportId}`);
   console.log(`[e2e] PDF           : ${BASE}/r/${reportId}.pdf  (HTTP ${pdf.status}, ${pdfLen} bytes)`);

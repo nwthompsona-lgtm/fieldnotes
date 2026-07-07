@@ -5,6 +5,34 @@ Newest at top within each section.
 
 ---
 
+## Phase 4–6 review hardening (xhigh code review)
+
+**D21. Invite-accept never logs in an existing account.** An invite token activates a NEW
+or pending (passwordless) account with the supplied credentials and issues a session; for
+an account that already has a password it ONLY adds the membership and returns
+`{ requiresLogin: true, email }` (no token) — a leaked/replayed invite can neither reset a
+password nor mint a session as the owner. Contracts gains `AcceptInviteResponse`
+(`AuthResponse | { requiresLogin }`) and `CreateInvitationRequest` (shared with the web app).
+
+**D22. `trustProxy: 1`, not `true`.** Trusting the whole X-Forwarded-For chain let a client
+forge the leftmost entry and rotate `req.ip` to defeat the per-IP login throttle. We trust
+exactly one hop (Render's LB); bump only if more proxy layers are added.
+
+**D23. `/media/*` is gated by report viewability, not org-admin.** The JSON report API hands
+`/media/<key>` URLs to every legitimate viewer (pm/super/viewer), so the route now authorizes
+each object by the same `canViewReport` as the report the key belongs to (404, not 403, when
+unviewable). This is the local-disk path only — prod R2 serves signed URLs the browser loads
+directly. Browser `<img>`/navigation can't carry a bearer, so the reworked Phase 9 frontend
+fetches media/hosted views with the bearer into blob URLs (do NOT reopen `/r` or `/media`).
+
+**D24. Boot seed is tenant-safe.** Orphan-project adoption (`org_id IS NULL → pilot`) runs
+only while the pilot org is the sole tenant (`countOrgs() <= 1`); authorship backfill is
+scoped to the pilot org's projects. Once self-serve signup creates real second orgs, neither
+can absorb/attribute another tenant's data. Report authorship is now written atomically in the
+report insert (no post-insert fill-if-null a crash could skip).
+
+---
+
 ## Checkpoint interpretation (important)
 
 **D0. Building backend before Checkpoint A passes.** The spec (§6, §11-A) says "do not

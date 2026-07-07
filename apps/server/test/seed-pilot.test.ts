@@ -111,7 +111,7 @@ describe('seedPilot (§12)', () => {
   it('existing user keeps their password: seed only ensures the membership', async () => {
     // Rotate the pilot admin's password out-of-band, reseed — must NOT reset it.
     const user = await deps.repo.getUserByEmail('jake@pilot.test');
-    await deps.repo.setUserPassword(user!.id, 'rotated-hash');
+    await deps.repo.updateUser(user!.id, { passwordHash: 'rotated-hash' });
     await seedPilot(deps.repo, cfg, () => {});
     expect((await deps.repo.getUserById(user!.id))?.passwordHash).toBe('rotated-hash');
   });

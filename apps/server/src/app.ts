@@ -14,10 +14,13 @@ export async function buildApp(deps: ServerDeps): Promise<FastifyInstance> {
   const app = Fastify({
     logger: { level: process.env.LOG_LEVEL ?? 'info' },
     bodyLimit: 8 * 1024 * 1024, // JSON bodies (edits) only; media goes via multipart
-    /** The server always sits behind a proxy in deployment (Render). Without this,
-     *  req.ip is the proxy hop for every client, which collapses the per-IP auth
-     *  throttle into one shared bucket — 30 logins/5min for the whole userbase. */
-    trustProxy: true,
+    /** Trust exactly ONE proxy hop — Render's load balancer, the single proxy in front of
+     *  the app. `true` (trust the whole chain) would take the leftmost, client-supplied
+     *  X-Forwarded-For entry as req.ip, letting an attacker rotate the header to get a fresh
+     *  per-IP throttle bucket every request and bypass the login rate limit. Trusting one hop
+     *  makes req.ip the address Render's LB observed (rightmost XFF), which the client can't
+     *  forge. Bump this only if more proxy layers are added in front. */
+    trustProxy: 1,
   });
 
   // No credentials mode needed: auth is a bearer header, not cookies (T-1).
