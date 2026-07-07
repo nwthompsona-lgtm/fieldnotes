@@ -157,6 +157,11 @@ export interface Repo {
   listOrgMembers(
     orgId: string,
   ): Promise<Array<PublicUser & { orgRole: OrgRole; projects: ProjectMember[] }>>;
+  updateMembershipRole(userId: string, orgId: string, orgRole: OrgRole): Promise<void>;
+  /** Remove the org membership AND the user's project assignments on that org's
+   *  projects (one transaction) — Settings "remove member". */
+  removeMembership(userId: string, orgId: string): Promise<void>;
+  countOrgAdmins(orgId: string): Promise<number>;
 
   // invitations
   createInvitation(i: {
@@ -176,6 +181,8 @@ export interface Repo {
   /** Projects the user can see in an org: admins all; members their assignments plus
    *  visibility='org' projects (D-4). Non-members get []. */
   listProjectsForUser(userId: string, orgId: string): Promise<Project[]>;
+  /** ALL of an org's projects (settings/admin surfaces — caller must already be gated). */
+  listProjectsForOrg(orgId: string): Promise<Project[]>;
   /** The user's explicit project_member roles across an org's projects, batched (one
    *  query) so the shell's project switcher can label each project without N lookups. */
   listProjectRolesForUser(
@@ -198,6 +205,13 @@ export interface Repo {
     role: ProjectRole;
   }): Promise<void>;
   removeProjectMember(projectId: string, userId: string): Promise<void>;
+  /** Upsert a member's project role (unique on project+user) — Settings assignments. */
+  setProjectMemberRole(pm: {
+    id: string;
+    projectId: string;
+    userId: string;
+    role: ProjectRole;
+  }): Promise<void>;
   listProjectMembers(projectId: string): Promise<ProjectMember[]>;
   getProjectRole(projectId: string, userId: string): Promise<ProjectRole | null>;
 

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Link, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import type { Report, ReportEdit, ProcessingStatus } from '@fieldreport/contracts';
 import {
   ApiError,
@@ -12,6 +12,7 @@ import {
 import { STATUS_POLL_MS } from '../config';
 import { useAutosave, type SaveState } from '../hooks/useAutosave';
 import { ErrorState, Loading, StatusBadge } from '../components/ui';
+import { SendModal } from '../components/SendModal';
 
 type Phase =
   | { kind: 'loading' }
@@ -195,6 +196,16 @@ function ReadyView({ report: initial, reportId }: { report: Report; reportId: st
   const [report, setReport] = useState<Report>(initial);
   const [finalizing, setFinalizing] = useState(false);
   const [finalizeError, setFinalizeError] = useState<string | null>(null);
+  const navigate = useNavigate();
+  // ?send=1 (from the reports list's Send pill) opens the Send modal straight away.
+  const [searchParams, setSearchParams] = useSearchParams();
+  const [sendOpen, setSendOpen] = useState(
+    () => searchParams.get('send') === '1' && initial.status === 'reviewed',
+  );
+  const closeSend = () => {
+    setSendOpen(false);
+    if (searchParams.get('send')) setSearchParams({}, { replace: true });
+  };
 
   const sortedObs = [...report.observations].sort((a, b) => a.order - b.order);
 
@@ -374,10 +385,16 @@ function ReadyView({ report: initial, reportId }: { report: Report; reportId: st
               </a>
             )}
             {report.pdfUrl && (
-              <a className="btn btn-primary" href={report.pdfUrl} target="_blank" rel="noreferrer">
+              <a className="btn btn-secondary" href={report.pdfUrl} target="_blank" rel="noreferrer">
                 Download PDF
               </a>
             )}
+            <Link className="btn btn-secondary" to={`/review/${encodeURIComponent(reportId)}/delivery`}>
+              View delivery
+            </Link>
+            <button type="button" className="btn btn-primary" onClick={() => setSendOpen(true)}>
+              Send report
+            </button>
           </>
         ) : (
           <button
@@ -411,6 +428,14 @@ function ReadyView({ report: initial, reportId }: { report: Report; reportId: st
 
       {finalizeError && (
         <div className="alert alert-error mt-16">Could not finalize: {finalizeError}</div>
+      )}
+
+      {sendOpen && (
+        <SendModal
+          report={report}
+          onClose={closeSend}
+          onSent={() => navigate(`/review/${encodeURIComponent(reportId)}/delivery`)}
+        />
       )}
     </div>
   );

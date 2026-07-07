@@ -425,6 +425,35 @@ export const SetProjectRosterRequest = z.object({
 });
 export type SetProjectRosterRequest = z.infer<typeof SetProjectRosterRequest>;
 
+// Settings — members & projects (Phase 10 / F2). Additive management DTOs for the
+// Settings screens; server-side guards (org admin / canManageProject) do the enforcing.
+
+export const UpdateMemberRoleRequest = z.object({ orgRole: OrgRole });
+export type UpdateMemberRoleRequest = z.infer<typeof UpdateMemberRoleRequest>;
+
+export const CreateProjectRequest = z.object({
+  name: z.string().min(1).max(200),
+  visibility: ProjectVisibility.default('assigned'),
+});
+export type CreateProjectRequest = z.infer<typeof CreateProjectRequest>;
+
+export const UpdateProjectRequest = z.object({ visibility: ProjectVisibility });
+export type UpdateProjectRequest = z.infer<typeof UpdateProjectRequest>;
+
+export const SetProjectMemberRequest = z.object({ role: ProjectRole });
+export type SetProjectMemberRequest = z.infer<typeof SetProjectMemberRequest>;
+
+/** A row of the Settings → Members table: the user, their org role, and their
+ *  per-project assignments (with names, for the chips). */
+export const OrgMemberRow = z.object({
+  user: PublicUser,
+  orgRole: OrgRole,
+  assignments: z.array(
+    z.object({ projectId: z.string(), projectName: z.string(), role: ProjectRole }),
+  ),
+});
+export type OrgMemberRow = z.infer<typeof OrgMemberRow>;
+
 // Send + delivery (plan §8, D-9).
 
 /** Who to send to: whole stakeholder orgs, specific contacts, and typed one-offs. */

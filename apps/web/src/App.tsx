@@ -8,7 +8,11 @@ import { AcceptInvitePage } from './pages/AcceptInvitePage';
 import { HomePage } from './pages/HomePage';
 import { ReportsListPage } from './pages/ReportsListPage';
 import { AccountPage } from './pages/AccountPage';
-import { SettingsPlaceholderPage } from './pages/SettingsPlaceholderPage';
+import { DeliveryPage } from './pages/DeliveryPage';
+import { SettingsLayout } from './pages/settings/SettingsLayout';
+import { MembersPage } from './pages/settings/MembersPage';
+import { ProjectsPage } from './pages/settings/ProjectsPage';
+import { StakeholdersPage } from './pages/settings/StakeholdersPage';
 import { ReviewPage } from './pages/ReviewPage';
 import { AdminListPage } from './pages/AdminListPage';
 import { AdminDetailPage } from './pages/AdminDetailPage';
@@ -53,8 +57,14 @@ export function App() {
           <Route path="/" element={<HomePage />} />
           <Route path="/p/:projectId/reports" element={<ReportsListPage />} />
           <Route path="/review/:id" element={<ReviewPage />} />
+          <Route path="/review/:id/delivery" element={<DeliveryPage />} />
           <Route path="/account" element={<AccountPage />} />
-          <Route path="/settings/*" element={<SettingsPlaceholderPage />} />
+          <Route path="/settings" element={<SettingsLayout />}>
+            <Route index element={<Navigate to="/settings/members" replace />} />
+            <Route path="members" element={<MembersPage />} />
+            <Route path="projects" element={<ProjectsPage />} />
+            <Route path="stakeholders" element={<StakeholdersPage />} />
+          </Route>
           <Route path="/admin" element={<AdminListPage />} />
           <Route path="/admin/:id" element={<AdminDetailPage />} />
         </Route>

@@ -702,6 +702,40 @@ export function makeRepo(db: Db): Repo {
       }));
     },
 
+    async updateMembershipRole(userId, orgId, orgRole) {
+      await db
+        .update(memberships)
+        .set({ orgRole })
+        .where(and(eq(memberships.userId, userId), eq(memberships.orgId, orgId)));
+    },
+
+    async removeMembership(userId, orgId) {
+      await db.transaction(async (tx) => {
+        // Drop the user's assignments on THIS org's projects only — assignments in the
+        // user's other orgs are untouched.
+        await tx.delete(projectMembers).where(
+          and(
+            eq(projectMembers.userId, userId),
+            inArray(
+              projectMembers.projectId,
+              tx.select({ id: projects.id }).from(projects).where(eq(projects.orgId, orgId)),
+            ),
+          ),
+        );
+        await tx
+          .delete(memberships)
+          .where(and(eq(memberships.userId, userId), eq(memberships.orgId, orgId)));
+      });
+    },
+
+    async countOrgAdmins(orgId) {
+      const rows = await db
+        .select({ userId: memberships.userId })
+        .from(memberships)
+        .where(and(eq(memberships.orgId, orgId), eq(memberships.orgRole, 'admin')));
+      return rows.length;
+    },
+
     // invitations
 
     async createInvitation(i) {
@@ -758,6 +792,15 @@ export function makeRepo(db: Db): Repo {
         .map(mapProject);
     },
 
+    async listProjectsForOrg(orgId) {
+      const rows = await db
+        .select()
+        .from(projects)
+        .where(eq(projects.orgId, orgId))
+        .orderBy(asc(projects.name));
+      return rows.map(mapProject);
+    },
+
     async listProjectRolesForUser(userId, orgId) {
       return db
         .select({ projectId: projectMembers.projectId, role: projectMembers.projectRole })
@@ -804,6 +847,16 @@ export function makeRepo(db: Db): Repo {
       await db
         .delete(projectMembers)
         .where(and(eq(projectMembers.projectId, projectId), eq(projectMembers.userId, userId)));
+    },
+
+    async setProjectMemberRole(pm) {
+      await db
+        .insert(projectMembers)
+        .values({ id: pm.id, projectId: pm.projectId, userId: pm.userId, projectRole: pm.role })
+        .onConflictDoUpdate({
+          target: [projectMembers.projectId, projectMembers.userId],
+          set: { projectRole: pm.role },
+        });
     },
 
     async listProjectMembers(projectId) {

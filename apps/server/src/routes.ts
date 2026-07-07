@@ -21,6 +21,7 @@ import { registerAuthRoutes } from './auth/routes.js';
 import { registerInvitationRoutes } from './auth/invitations.js';
 import { registerDirectoryRoutes } from './directory.js';
 import { registerSendRoutes } from './send.js';
+import { registerSettingsRoutes } from './settings.js';
 import { bearerToken, requireAuth } from './auth/context.js';
 import type { ReportAccessMeta } from './auth/authz.js';
 
@@ -43,6 +44,7 @@ export function registerRoutes(app: FastifyInstance, deps: ServerDeps): void {
   registerInvitationRoutes(app, deps);
   registerDirectoryRoutes(app, deps);
   registerSendRoutes(app, deps);
+  registerSettingsRoutes(app, deps);
 
   /** Break-glass superadmin (§15.3): the static ADMIN_TOKEN sees all orgs, but only
    *  when explicitly enabled — off by default since Phase 4 re-gated /api/admin/*.

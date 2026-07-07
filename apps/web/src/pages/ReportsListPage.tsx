@@ -44,35 +44,29 @@ function dateBlock(date: string): { day: string; mon: string } {
   return { day: String(d), mon: MONTHS[m - 1] ?? '' };
 }
 
-/** Context action per the permission matrix: supers edit their OWN drafts only, but any
- *  send-capable role can Send a finalized report; everyone else just Views. */
-function actionFor(status: RailStatus, canEditThis: boolean, canSend: boolean): string {
+/** Context action per the permission matrix (D-7: send = finalize = edit, so a super
+ *  Sends only their OWN finalized reports); everyone else just Views. */
+function actionFor(status: RailStatus, canEditThis: boolean): string {
   switch (status) {
     case 'processing':
       return canEditThis ? 'Review' : 'View';
     case 'draft':
       return canEditThis ? 'Continue' : 'View';
     case 'finalized':
-      return canSend ? 'Send' : 'View';
+      return canEditThis ? 'Send' : 'View';
     case 'sent':
       return 'View';
   }
 }
 
-function RailRow({
-  r,
-  canEditThis,
-  canSend,
-}: {
-  r: ReportListRow;
-  canEditThis: boolean;
-  canSend: boolean;
-}) {
+function RailRow({ r, canEditThis }: { r: ReportListRow; canEditThis: boolean }) {
   const status = railStatusOf(r);
   const { day, mon } = dateBlock(r.date);
-  const action = actionFor(status, canEditThis, canSend);
+  const action = actionFor(status, canEditThis);
+  // The Send pill deep-links into the review page with the Send modal open.
+  const href = `/review/${encodeURIComponent(r.id)}${action === 'Send' ? '?send=1' : ''}`;
   return (
-    <Link to={`/review/${encodeURIComponent(r.id)}`} className={`rail-row rail-${status}`}>
+    <Link to={href} className={`rail-row rail-${status}`}>
       <span className="rail-date">
         <span className="day">{day}</span>
         <br />
@@ -204,7 +198,6 @@ export function ReportsListPage() {
             <RailRow
               key={r.id}
               r={r}
-              canSend={writable}
               canEditThis={
                 role === 'admin' ||
                 role === 'pm' ||

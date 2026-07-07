@@ -28,6 +28,8 @@ export interface Workspace {
   orgRole: OrgRole | null;
   /** Projects in the current org; null while (re)loading. */
   projects: ProjectWithRole[] | null;
+  /** Re-fetch the project list (after create / visibility change in Settings). */
+  reloadProjects(): void;
   switchOrg(orgId: string): void;
   /** Last-visited project in the current org, validated against `projects`. */
   defaultProjectId: string | null;
@@ -81,6 +83,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
   const [currentOrgId, setCurrentOrgId] = useState<string | null>(null);
   const [projects, setProjects] = useState<ProjectWithRole[] | null>(null);
   const [reloadKey, setReloadKey] = useState(0);
+  const [projectsKey, setProjectsKey] = useState(0);
 
   // Load /me once per session (or on retry). A 401 inside authed() clears the session,
   // which unmounts this provider via the RequireAuth guard — no handling needed here.
@@ -101,7 +104,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     };
   }, [reloadKey]);
 
-  // (Re)load the project list whenever the current org changes.
+  // (Re)load the project list whenever the current org changes (or on reloadProjects()).
   useEffect(() => {
     if (!currentOrgId) return;
     let alive = true;
@@ -112,7 +115,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     return () => {
       alive = false;
     };
-  }, [currentOrgId]);
+  }, [currentOrgId, projectsKey]);
 
   const switchOrg = useCallback((orgId: string) => {
     persist(LAST_ORG_KEY, orgId);
@@ -156,6 +159,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     org,
     orgRole: org?.role ?? null,
     projects,
+    reloadProjects: () => setProjectsKey((k) => k + 1),
     switchOrg,
     defaultProjectId,
     rememberProject,
