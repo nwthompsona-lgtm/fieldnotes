@@ -442,7 +442,7 @@ Three tiers. **The dev/staging tier has its own database and its own object stor
 | Purpose | build + unit-test each phase | integration-verify before promotion | the pilot |
 | Server | `npm run dev:server` (`localhost:8787`) | Render `fieldreport-server-dev`, deploys from `develop` → `<DEV_SERVER_URL>` | Render `fieldreport-server` (`https://fieldnotes-yglr.onrender.com`), deploys from `master` |
 | DB | pglite (`.data/pglite`) | **separate Neon DB** `fieldreport-dev` (empty, seeded) | Neon (prod) |
-| Storage | local disk (`.data/storage`) | **separate R2 bucket** `fieldreport-media-dev` | R2 (prod) |
+| Storage | local disk (`.data/storage`) | **separate R2 bucket** `fieldreport-dev` | R2 (prod) |
 | STT / LLM | mock | real keys *or* mock (your call) | real keys |
 | Email | mock | Resend **test** key or mock | Resend live (verified domain) |
 | Web / capture | localhost | Vercel `*-dev` projects, `VITE_API_BASE=<DEV_SERVER_URL>` | Vercel prod projects → prod server |
@@ -494,7 +494,7 @@ Each playbook is written to be executed cold. Format: **Goal · Starting state �
   5. A short `DEV_ENV.md` runbook capturing the dashboard steps + the resulting URLs.
 - **Human steps (dashboards — you do these; I can't click UIs or handle credentials):**
   1. **Neon:** create DB `fieldreport-dev` (new project or branch) → copy its `DATABASE_URL`.
-  2. **R2:** create bucket `fieldreport-media-dev` + API token → endpoint + keys.
+  2. **R2:** create bucket `fieldreport-dev` + API token → endpoint + keys.
   3. **Render:** New → Blueprint `render.dev.yaml` (or New Web Service, Docker, branch `develop`); paste the dev secrets; deploy → record `<DEV_SERVER_URL>`.
   4. **Vercel:** two new projects (capture-dev, web-dev) from this repo, production branch `develop`, root dirs `apps/capture` / `apps/web`, `VITE_API_BASE=<DEV_SERVER_URL>`; deploy → record dev URLs; put those origins in the dev server's `CORS_ALLOWED_ORIGINS` and redeploy.
 - **Don't break:** never point the dev server at the prod Neon DB or prod R2 bucket; do **not** merge `develop → master`. Prod stays exactly as is.

@@ -17,7 +17,7 @@ We promote `develop → master` only when you say so.
 | Branch | `master` | `develop` |
 | Server | Render `fieldreport-server` | Render `fieldreport-server-dev` (`render.dev.yaml`) |
 | Database | Neon (prod) | **separate** Neon `fieldreport-dev` |
-| Storage | R2 (prod) | **separate** R2 `fieldreport-media-dev` |
+| Storage | R2 (prod) | **separate** R2 `fieldreport-dev` |
 | Web / capture | Vercel prod projects | Vercel `*-dev` projects |
 
 ## What I already did (repo side, on `develop`)
@@ -48,7 +48,7 @@ deliberate "leave CORS unset first, fill it in last" loop to break the chicken-a
 
 ### 2. Cloudflare R2 — create the dev bucket
 
-1. R2 → **Create bucket** → `fieldreport-media-dev`.
+1. R2 → **Create bucket** → `fieldreport-dev`.
 2. Create an **API token** scoped to that bucket → copy Access Key ID + Secret Access Key.
 3. Note the S3 endpoint `https://<account>.r2.cloudflarestorage.com`.
 4. **Hold these** for the `S3_*` vars in step 3. **Do not reuse the prod bucket or keys.**
@@ -70,7 +70,7 @@ deliberate "leave CORS unset first, fill it in last" loop to break the chicken-a
 | Var | Value | Notes |
 |---|---|---|
 | `DATABASE_URL` | dev Neon string (step 1) | **dev only**, never prod |
-| `S3_BUCKET` | `fieldreport-media-dev` | |
+| `S3_BUCKET` | `fieldreport-dev` | |
 | `S3_ENDPOINT` | `https://<account>.r2.cloudflarestorage.com` | |
 | `S3_REGION` | `auto` | preset in blueprint |
 | `S3_ACCESS_KEY_ID` | dev R2 key (step 2) | **dev only** |

@@ -38,7 +38,7 @@ services:
       # ── DEV database (separate Neon project/branch — NOT prod) ──
       - key: DATABASE_URL
         sync: false
-      # ── DEV object storage (separate R2 bucket fieldreport-media-dev — NOT prod) ──
+      # ── DEV object storage (separate R2 bucket fieldreport-dev — NOT prod) ──
       - key: S3_BUCKET
         sync: false
       - key: S3_ENDPOINT
