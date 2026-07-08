@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import type { AdminReportView } from '@fieldreport/contracts';
-import { ApiError, getAdminReport } from '../api';
+import { ApiError, getAdminReport, openAuthedArtifact } from '../api';
 import { useAdminToken } from '../hooks/useAdminToken';
 import { TokenGate } from '../components/TokenGate';
 import { Chip, ErrorState, Loading, ProcessingBadge, StatusBadge } from '../components/ui';
@@ -16,6 +16,18 @@ export function AdminDetailPage() {
   const { id = '' } = useParams();
   const { token, setToken, clear } = useAdminToken();
   const [state, setState] = useState<State>({ kind: 'loading' });
+  const [openError, setOpenError] = useState<string | null>(null);
+
+  // Hosted HTML/PDF are session-gated (§6.6) — a plain <a target="_blank"> would 401,
+  // so open them via the shared bearer-carrying blob-URL helper. Pass the OPERATOR token
+  // (not the session): under break-glass it can view cross-org reports the operator's
+  // own login isn't a member of, matching what this page's data fetch already uses.
+  const openArtifact = (url: string) => {
+    setOpenError(null);
+    openAuthedArtifact(url, token ?? undefined).catch((err) =>
+      setOpenError(err instanceof Error ? err.message : 'Failed to open.'),
+    );
+  };
 
   const load = useCallback(async () => {
     if (!token) {
@@ -99,17 +111,29 @@ export function AdminDetailPage() {
         </div>
         <div className="row">
           {report.htmlUrl && (
-            <a className="btn btn-secondary" href={report.htmlUrl} target="_blank" rel="noreferrer">
+            <button
+              type="button"
+              className="btn btn-secondary"
+              onClick={() => report.htmlUrl && openArtifact(report.htmlUrl)}
+            >
               Open report ↗
-            </a>
+            </button>
           )}
           {report.pdfUrl && (
-            <a className="btn btn-secondary" href={report.pdfUrl} target="_blank" rel="noreferrer">
+            <button
+              type="button"
+              className="btn btn-secondary"
+              onClick={() => report.pdfUrl && openArtifact(report.pdfUrl)}
+            >
               PDF ↗
-            </a>
+            </button>
           )}
         </div>
       </div>
+
+      {openError && (
+        <div className="alert alert-error mb-24">Could not open the report: {openError}</div>
+      )}
 
       {report.summary && (
         <div className="card mb-24">

@@ -58,7 +58,10 @@ export function railStatusOf(r: {
   processing: ReportListRow['processing'];
   lastSend: ReportListRow['lastSend'];
 }): RailStatus {
-  if (r.lastSend) return 'sent';
+  // "Sent" only while the report is still in its sent (finalized) form — a report
+  // edited AFTER a send reverts to draft server-side and must surface as Draft
+  // (Continue + In-progress filter), not hide behind a stale teal chip.
+  if (r.lastSend && r.status === 'reviewed') return 'sent';
   if (r.status === 'reviewed') return 'finalized';
   if (r.processing === 'ready' || r.processing === 'failed') return 'draft';
   return 'processing';

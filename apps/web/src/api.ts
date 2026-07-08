@@ -91,6 +91,64 @@ export function finalizeReport(id: string): Promise<Report> {
   });
 }
 
+// ── Hosted artifacts (session-gated /r/:id and /r/:id.pdf) ──────────────────
+// §6.6: the hosted HTML/PDF routes REQUIRE the session bearer, so a bare
+// <a target="_blank"> always 401s — a new tab carries no Authorization header.
+// Instead we pre-open a blank tab synchronously inside the click (popup blockers
+// only allow window.open during a user gesture), fetch the artifact WITH the
+// bearer, and point the tab at a blob: URL of the bytes. Shared by ReviewPage
+// and AdminDetailPage.
+
+/** How long a handed-out blob: URL stays alive before revocation — long enough
+ *  for the new tab (and its PDF viewer) to load, short enough not to leak the
+ *  blob for the whole session. */
+const BLOB_URL_TTL_MS = 60_000;
+
+/** Fetch a session-gated URL with the bearer and return a blob: URL for it.
+ *  The URL self-revokes after BLOB_URL_TTL_MS. */
+async function fetchBlobUrl(url: string, bearerToken?: string): Promise<string> {
+  let res: Response;
+  try {
+    res = await fetch(url, {
+      headers: bearerToken ? { authorization: `Bearer ${bearerToken}` } : { ...authHeaders() },
+    });
+  } catch {
+    throw new ApiError(0, `Could not reach the server at ${API_BASE}.`);
+  }
+  if (!res.ok) {
+    throw new ApiError(res.status, `Could not load it (${res.status} ${res.statusText}).`);
+  }
+  const blobUrl = URL.createObjectURL(await res.blob());
+  // Deferred revoke: the new tab has long since read the blob after a minute.
+  setTimeout(() => URL.revokeObjectURL(blobUrl), BLOB_URL_TTL_MS);
+  return blobUrl;
+}
+
+/** Open a session-gated hosted artifact (htmlUrl / pdfUrl) in a new tab.
+ *  MUST be invoked synchronously from a click handler — window.open only
+ *  succeeds inside the user gesture. Rejects with ApiError when the popup was
+ *  blocked or the fetch failed (the blank tab is closed); surface the message
+ *  inline next to the button.
+ *  `bearerToken` overrides the session bearer — the admin surface passes its
+ *  operator token so break-glass (/r accepts it since the Phase 9–12 fixes) can
+ *  open cross-org reports the operator's own session can't view. */
+export async function openAuthedArtifact(url: string, bearerToken?: string): Promise<void> {
+  // Pre-open within the gesture — window.open after an await gets popup-blocked.
+  const win = window.open('', '_blank');
+  if (!win) {
+    throw new ApiError(
+      0,
+      'Your browser blocked the new tab — allow pop-ups for this site and try again.',
+    );
+  }
+  try {
+    win.location.href = await fetchBlobUrl(url, bearerToken);
+  } catch (err) {
+    win.close(); // don't strand a blank tab on failure
+    throw err;
+  }
+}
+
 // ── Admin (operator-facing, bearer-gated) ───────────────────────────────────
 
 function bearer(token: string): RequestInit {

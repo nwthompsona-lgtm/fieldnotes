@@ -83,15 +83,17 @@ export function registerSettingsRoutes(app: FastifyInstance, deps: ServerDeps): 
       if (!parsed.success) {
         return reply.code(400).send({ error: 'invalid role', issues: parsed.error.issues });
       }
-      // Last-admin lockout guard: an org must always keep at least one admin.
-      if (
-        target.orgRole === 'admin' &&
-        parsed.data.orgRole !== 'admin' &&
-        (await repo.countOrgAdmins(req.params.orgId)) <= 1
-      ) {
+      // Last-admin lockout guard: an org must always keep at least one admin. Enforced
+      // ATOMICALLY in the repo (admin rows locked + counted in the same transaction as
+      // the write) so two concurrent demotes can't race the org to zero admins.
+      const result = await repo.updateMembershipRoleGuarded(
+        req.params.userId,
+        req.params.orgId,
+        parsed.data.orgRole,
+      );
+      if (result === 'last-admin') {
         return reply.code(400).send({ error: 'an organization needs at least one admin' });
       }
-      await repo.updateMembershipRole(req.params.userId, req.params.orgId, parsed.data.orgRole);
       return reply.code(204).send();
     },
   );
@@ -106,10 +108,11 @@ export function registerSettingsRoutes(app: FastifyInstance, deps: ServerDeps): 
       }
       const target = await repo.getMembership(req.params.userId, req.params.orgId);
       if (!target) return reply.code(404).send({ error: 'not found' });
-      if (target.orgRole === 'admin' && (await repo.countOrgAdmins(req.params.orgId)) <= 1) {
+      // Atomic last-admin guard — see the PATCH handler above.
+      const result = await repo.removeMembershipGuarded(req.params.userId, req.params.orgId);
+      if (result === 'last-admin') {
         return reply.code(400).send({ error: 'an organization needs at least one admin' });
       }
-      await repo.removeMembership(req.params.userId, req.params.orgId);
       return reply.code(204).send();
     },
   );

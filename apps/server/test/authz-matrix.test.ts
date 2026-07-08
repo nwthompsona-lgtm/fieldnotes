@@ -13,6 +13,7 @@ import type { FastifyInstance } from 'fastify';
 import sharp from 'sharp';
 import { buildApp } from '../src/app.js';
 import type { ServerDeps } from '../src/deps.js';
+import { signMediaKey } from '../src/storage/local.js';
 import { buildTestDeps } from './helpers.js';
 import type { UploadManifest } from '@fieldreport/contracts';
 import type { IngestMediaKeys } from '../src/db/types.js';
@@ -302,6 +303,40 @@ describe('media + admin surface (§6.7, §6.8)', () => {
     expect((await get('outsiderB', `/media/${revKey}`)).statusCode).toBe(404); // other org
     // Unknown report id → 404.
     expect((await get('adminA', '/media/reports/r-nope/photos/y.jpg')).statusCode).toBe(404);
+  });
+
+  it('/media/* accepts a signed capability URL without a session; tampered/expired 401', async () => {
+    // Browsers never attach Authorization to <img>/<audio> loads — the local driver's
+    // url() mints ?exp&sig, and /media honors a valid signature with NO session.
+    const px = new Uint8Array(
+      await sharp({ create: { width: 4, height: 4, channels: 3, background: { r: 9, g: 9, b: 9 } } })
+        .jpeg()
+        .toBuffer(),
+    );
+    const key = `reports/${repRev}/photos/signed.jpg`;
+    await deps.storage.put(key, px, { contentType: 'image/jpeg' });
+
+    const u = new URL(await deps.storage.url(key));
+    const signedPath = u.pathname + u.search;
+    expect((await get(null, signedPath)).statusCode).toBe(200); // valid sig, no session
+
+    // Tampered signature → falls back to the session gate → 401 anonymous.
+    const sig = u.searchParams.get('sig')!;
+    const badSig = sig.replace(/^./, sig[0] === '0' ? '1' : '0');
+    expect(
+      (await get(null, `${u.pathname}?exp=${u.searchParams.get('exp')}&sig=${badSig}`)).statusCode,
+    ).toBe(401);
+    // Expired exp (signature no longer covers a live window) → 401.
+    const pastExp = Math.floor(Date.now() / 1000) - 60;
+    expect(
+      (await get(null, `${u.pathname}?exp=${pastExp}&sig=${signMediaKey(key, pastExp)}`)).statusCode,
+    ).toBe(401);
+    // No sig at all + no session → 401 (the pre-existing gate, unchanged).
+    expect((await get(null, u.pathname)).statusCode).toBe(401);
+    // An invalid sig does NOT lock out a valid session (fallback keeps working).
+    expect(
+      (await get('viewerA', `${u.pathname}?exp=${u.searchParams.get('exp')}&sig=${badSig}`)).statusCode,
+    ).toBe(200);
   });
 
   it('admin routes: 401 anonymous, 403 non-admin, static token dead when break-glass off', async () => {

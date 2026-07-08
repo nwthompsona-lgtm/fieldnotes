@@ -6,12 +6,14 @@ import {
   finalizeReport,
   getReport,
   getReportStatus,
+  openAuthedArtifact,
   patchReport,
   type StatusEnvelope,
 } from '../api';
 import { STATUS_POLL_MS } from '../config';
 import { useAutosave, type SaveState } from '../hooks/useAutosave';
-import { ErrorState, Loading, StatusBadge } from '../components/ui';
+import { useWorkspace, effectiveRole, canEditReport } from '../workspace';
+import { Chip, ErrorState, Loading, StatusBadge } from '../components/ui';
 import { SendModal } from '../components/SendModal';
 
 type Phase =
@@ -196,15 +198,41 @@ function ReadyView({ report: initial, reportId }: { report: Report; reportId: st
   const [report, setReport] = useState<Report>(initial);
   const [finalizing, setFinalizing] = useState(false);
   const [finalizeError, setFinalizeError] = useState<string | null>(null);
+  const [openError, setOpenError] = useState<string | null>(null);
   const navigate = useNavigate();
-  // ?send=1 (from the reports list's Send pill) opens the Send modal straight away.
+  const ws = useWorkspace();
+
+  // Per-report edit rights (D-7: send = finalize = edit). The SERVER's per-requester
+  // verdict (report.canEdit, derived from the report's OWN org/project) is authoritative:
+  // the local rule only sees the currently-viewed org, so it misclassifies cross-org
+  // reports (the author lands read-only via the capture hand-off; an org-A admin gets a
+  // 403-autosave loop on an org-B report). The shared local rule remains only as a
+  // fallback for servers that predate the field.
+  const project = ws.projects?.find((p) => p.id === report.projectId);
+  const canEdit =
+    report.canEdit ?? canEditReport(effectiveRole(ws, project), report, ws.user.id);
+
+  // ?send=1 (from the reports list's Send pill / capture hand-off) opens the Send
+  // modal. Effect-driven (not initial state) so a still-loading project list doesn't
+  // swallow the deep link; non-editors simply never trigger it. closeSend strips the
+  // param so the modal won't re-open.
   const [searchParams, setSearchParams] = useSearchParams();
-  const [sendOpen, setSendOpen] = useState(
-    () => searchParams.get('send') === '1' && initial.status === 'reviewed',
-  );
+  const [sendOpen, setSendOpen] = useState(false);
+  useEffect(() => {
+    if (canEdit && report.status === 'reviewed' && searchParams.get('send') === '1') {
+      setSendOpen(true);
+    }
+  }, [canEdit, report.status, searchParams]);
   const closeSend = () => {
     setSendOpen(false);
     if (searchParams.get('send')) setSearchParams({}, { replace: true });
+  };
+
+  // Hosted HTML/PDF are session-gated — a plain <a target="_blank"> would 401, so we
+  // open them via the bearer-carrying blob-URL helper and surface failures inline.
+  const openArtifact = (url: string) => {
+    setOpenError(null);
+    openAuthedArtifact(url).catch((err) => setOpenError(messageOf(err)));
   };
 
   const sortedObs = [...report.observations].sort((a, b) => a.order - b.order);
@@ -268,6 +296,14 @@ function ReadyView({ report: initial, reportId }: { report: Report; reportId: st
   };
 
   const reviewed = report.status === 'reviewed';
+
+  // Read-only rendering for viewers / non-author supers: plain text instead of
+  // textareas (their autosave PATCHes would only 403 into a permanent "Save failed"),
+  // and no Send / Finalize / delivery affordances. Placed after every hook above so
+  // the hook order is stable when canEdit flips as the project list loads.
+  if (!canEdit) {
+    return <ReadOnlyView report={report} />;
+  }
 
   return (
     <div className="page page-narrow">
@@ -375,19 +411,22 @@ function ReadyView({ report: initial, reportId }: { report: Report; reportId: st
           <>
             <StatusBadge status="reviewed" />
             {report.htmlUrl && (
-              <a
+              <button
+                type="button"
                 className="btn btn-secondary"
-                href={report.htmlUrl}
-                target="_blank"
-                rel="noreferrer"
+                onClick={() => report.htmlUrl && openArtifact(report.htmlUrl)}
               >
                 Open report ↗
-              </a>
+              </button>
             )}
             {report.pdfUrl && (
-              <a className="btn btn-secondary" href={report.pdfUrl} target="_blank" rel="noreferrer">
+              <button
+                type="button"
+                className="btn btn-secondary"
+                onClick={() => report.pdfUrl && openArtifact(report.pdfUrl)}
+              >
                 Download PDF
-              </a>
+              </button>
             )}
             <Link className="btn btn-secondary" to={`/review/${encodeURIComponent(reportId)}/delivery`}>
               View delivery
@@ -430,12 +469,110 @@ function ReadyView({ report: initial, reportId }: { report: Report; reportId: st
         <div className="alert alert-error mt-16">Could not finalize: {finalizeError}</div>
       )}
 
+      {openError && (
+        <div className="alert alert-error mt-16">Could not open the report: {openError}</div>
+      )}
+
       {sendOpen && (
         <SendModal
           report={report}
           onClose={closeSend}
           onSent={() => navigate(`/review/${encodeURIComponent(reportId)}/delivery`)}
         />
+      )}
+    </div>
+  );
+}
+
+/** Read-only report view (D-7): the same content as ReadyView but rendered as plain
+ *  text — no textareas / autosave, no Send / Finalize / delivery. Hosted HTML/PDF stay
+ *  reachable once reviewed (viewing is exactly what these roles are allowed to do),
+ *  opened through the bearer-carrying blob-URL helper like the editable view. */
+function ReadOnlyView({ report }: { report: Report }) {
+  const [openError, setOpenError] = useState<string | null>(null);
+  const sortedObs = [...report.observations].sort((a, b) => a.order - b.order);
+  const { htmlUrl, pdfUrl } = report;
+  const reviewed = report.status === 'reviewed';
+
+  const openArtifact = (url: string) => {
+    setOpenError(null);
+    openAuthedArtifact(url).catch((err) => setOpenError(messageOf(err)));
+  };
+
+  return (
+    <div className="page page-narrow">
+      <div className="row row-between mb-24">
+        <div>
+          <p className="eyebrow">Field report</p>
+          <h1>Daily Field Report</h1>
+          <div className="report-meta">
+            <span>
+              <b>{report.date}</b>
+            </span>
+            <span>
+              Project <b>{report.projectName ?? report.projectId}</b>
+            </span>
+            <span>
+              Prepared by <b>{report.superName}</b>
+            </span>
+          </div>
+        </div>
+        <StatusBadge status={report.status} />
+      </div>
+
+      <div className="card">
+        <p className="eyebrow">Daily summary</p>
+        <p className="polished-text" style={{ margin: 0 }}>
+          {report.summary?.trim() || 'No summary yet.'}
+        </p>
+      </div>
+
+      <h2 className="mt-24">Observations ({sortedObs.length})</h2>
+      {sortedObs.length === 0 && (
+        <div className="card muted">No observations were captured for this report.</div>
+      )}
+
+      {sortedObs.map((obs, i) => (
+        <div className="card obs-card" key={obs.id}>
+          <div>
+            <div className="obs-index">Observation {i + 1}</div>
+            <div className="photo-stack">
+              {obs.photos.map((p) => (
+                <img key={p.id} src={p.blobRef} alt={`Observation ${i + 1}`} loading="lazy" />
+              ))}
+            </div>
+          </div>
+          <div>
+            <p className="polished-text">
+              {obs.cleanedDescription?.trim() || (
+                <span className="muted">— no description —</span>
+              )}
+            </p>
+            <div className="chip-row">
+              {obs.trade && <Chip label="Trade" value={obs.trade} />}
+              {obs.area && <Chip label="Area" value={obs.area} />}
+            </div>
+          </div>
+        </div>
+      ))}
+
+      <div className="finalize-bar">
+        <span className="muted small">Read-only — you don’t have edit access to this report.</span>
+        <div className="spacer" />
+        {reviewed && htmlUrl && (
+          <button type="button" className="btn btn-secondary" onClick={() => openArtifact(htmlUrl)}>
+            Open report ↗
+          </button>
+        )}
+        {reviewed && pdfUrl && (
+          <button type="button" className="btn btn-secondary" onClick={() => openArtifact(pdfUrl)}>
+            Download PDF
+          </button>
+        )}
+      </div>
+
+      {openError && (
+        <div className="alert alert-error mt-16">Could not open the report: {openError}</div>
       )}
     </div>
   );

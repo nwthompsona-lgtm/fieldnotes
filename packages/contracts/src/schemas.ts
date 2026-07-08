@@ -13,7 +13,7 @@ import { z } from 'zod';
 
 /** Bump on any breaking change to the shapes below. The client stamps this into
  *  every upload manifest so the server can reject incompatible bundles. */
-export const CONTRACTS_VERSION = '1.2.0';
+export const CONTRACTS_VERSION = '1.2.1';
 
 // ---------------------------------------------------------------------------
 // Primitives
@@ -144,6 +144,10 @@ export const Report = z.object({
   processingError: z.string().optional(),
   htmlUrl: z.string().optional(),
   pdfUrl: z.string().optional(),
+  /** Whether THE REQUESTER may edit/finalize/send this report (v1.2.1). Server-computed
+   *  per session from the report's OWN org/project (§6.4) — clients must prefer this over
+   *  re-deriving from their current-org UI state, which misclassifies cross-org reports. */
+  canEdit: z.boolean().optional(),
   /** Author's user id (v1.2.0, auth plan §1.3). Optional: pre-auth reports lack it
    *  until the Phase 4 backfill; `superName` stays the display string. */
   createdBy: z.string().optional(),
@@ -485,6 +489,10 @@ export const Recipient = z.object({
   firstOpenedAt: Iso8601.optional(),
   revokedAt: Iso8601.optional(),
   openCount: z.number().int(),
+  /** Last email-dispatch failure for this recipient (null/absent = delivered to the
+   *  provider OK). Set when the provider rejects (e.g. unverified from-domain) so the
+   *  delivery panel can say "email failed" instead of silently looking sent. */
+  emailError: z.string().nullable().optional(),
 });
 export type Recipient = z.infer<typeof Recipient>;
 

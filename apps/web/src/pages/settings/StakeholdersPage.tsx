@@ -37,6 +37,7 @@ function AddContactForm({
   const [email, setEmail] = useState('');
   const [title, setTitle] = useState('');
   const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   if (!open) {
     return (
@@ -48,18 +49,28 @@ function AddContactForm({
   const submit = async (e: FormEvent) => {
     e.preventDefault();
     setBusy(true);
+    setError(null);
     try {
       await onAdd({ name: name.trim(), email: email.trim(), title: title.trim() || undefined });
       setName('');
       setEmail('');
       setTitle('');
       setOpen(false);
+    } catch (err) {
+      // Mirror addCompany: surface the ApiError message inline instead of letting the
+      // rejection go unhandled with no feedback. The form stays open so nothing is lost.
+      setError(err instanceof Error ? err.message : String(err));
     } finally {
       setBusy(false);
     }
   };
   return (
     <form className="inline-form" onSubmit={submit}>
+      {error && (
+        <p className="form-error" role="alert" style={{ flexBasis: '100%' }}>
+          {error}
+        </p>
+      )}
       <div className="grow">
         <span className="field-name">Name</span>
         <input className="input" required value={name} onChange={(e) => setName(e.target.value)} />

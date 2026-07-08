@@ -23,6 +23,9 @@ export function LoginScreen({ onLoggedIn }: { onLoggedIn: () => void }) {
       onLoggedIn();
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Login failed — try again.');
+    } finally {
+      // ALWAYS reset — a success normally unmounts this screen (session emit), but if
+      // persisting the token hiccups the button must not wedge on "Logging in…".
       setBusy(false);
     }
   }

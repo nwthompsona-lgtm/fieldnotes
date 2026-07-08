@@ -81,8 +81,9 @@ export interface Repo {
   getProject(id: string): Promise<Project | null>;
   upsertProject(p: Project): Promise<void>;
   /** Ensure a project row exists for an uploaded report (the reports.projectId FK
-   *  requires it). Creates it with an empty glossary, or — if it already exists —
-   *  refreshes name/superName while PRESERVING any accumulated glossary. */
+   *  requires it). CREATE-IF-MISSING ONLY: an existing row is never touched — the
+   *  manifest echoes a possibly-stale cached picker label, and renames are an admin/pm
+   *  action (permission matrix), so an upload must never rename a project org-wide. */
   ensureProjectFromUpload(p: { id: string; name: string; superName: string }): Promise<void>;
 
   // ingest (idempotent on walkId)
@@ -157,11 +158,21 @@ export interface Repo {
   listOrgMembers(
     orgId: string,
   ): Promise<Array<PublicUser & { orgRole: OrgRole; projects: ProjectMember[] }>>;
-  updateMembershipRole(userId: string, orgId: string, orgRole: OrgRole): Promise<void>;
+  /** Change a member's org role with the last-admin lockout enforced ATOMICALLY: the
+   *  org's admin membership rows are locked (SELECT ... FOR UPDATE) and counted inside
+   *  the SAME transaction as the write, so two concurrent demote/remove requests can
+   *  never race a check-then-act guard and drive the org to zero admins. Returns
+   *  'last-admin' (no write) when the change would demote the sole remaining admin. */
+  updateMembershipRoleGuarded(
+    userId: string,
+    orgId: string,
+    orgRole: OrgRole,
+  ): Promise<'ok' | 'last-admin'>;
   /** Remove the org membership AND the user's project assignments on that org's
-   *  projects (one transaction) — Settings "remove member". */
-  removeMembership(userId: string, orgId: string): Promise<void>;
-  countOrgAdmins(orgId: string): Promise<number>;
+   *  projects (one transaction) — Settings "remove member". Same atomic last-admin
+   *  guard as updateMembershipRoleGuarded: removing the sole admin returns 'last-admin'
+   *  and deletes nothing. */
+  removeMembershipGuarded(userId: string, orgId: string): Promise<'ok' | 'last-admin'>;
 
   // invitations
   createInvitation(i: {
@@ -306,6 +317,10 @@ export interface Repo {
   revokeRecipient(id: string): Promise<void>;
   /** Resend of an expired link: fresh token + expiry on the same row (keeps open history). */
   refreshRecipientToken(id: string, patch: { token: string; expiresAt: Date }): Promise<void>;
+  /** Record the last email-dispatch outcome for a recipient: the provider's failure
+   *  message on throw, or null to clear it after a later successful (re)send — so the
+   *  delivery panel can say "email failed" instead of silently looking sent. */
+  setRecipientEmailError(id: string, error: string | null): Promise<void>;
   listSendsForReport(reportId: string): Promise<ReportSend[]>; // with recipients (delivery panel)
   /** Latest send rollup for the report-list chip: sentAt + opened/total. */
   getReportLatestSendSummary(

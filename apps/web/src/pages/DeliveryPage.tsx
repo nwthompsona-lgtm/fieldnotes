@@ -40,6 +40,14 @@ function Row({
         <div className="deliv-name">{r.name}</div>
         <div className="deliv-org">{r.org ? `${r.org} · ${r.email}` : r.email}</div>
       </div>
+      {r.emailError && (
+        // Provider rejected the email (contracts 1.2.x `emailError`) — make it visible
+        // instead of silently looking sent; hover for the raw provider message. The
+        // existing Resend button is the retry path.
+        <span className="schip schip-danger" title={r.emailError}>
+          Email failed
+        </span>
+      )}
       {revoked ? (
         <span className="deliv-status revoked">Revoked</span>
       ) : r.firstOpenedAt ? (

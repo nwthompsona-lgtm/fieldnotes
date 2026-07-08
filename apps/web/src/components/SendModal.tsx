@@ -102,10 +102,15 @@ export function SendModal({
   const [sending, setSending] = useState(false);
   const [done, setDone] = useState<ReportSend | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // Roster load has its own explicit error + retry state — a failed load must stop the
+  // "Loading recipients…" spinner (roster stays null forever) and offer a Retry.
+  const [rosterError, setRosterError] = useState<string | null>(null);
+  const [rosterReloadKey, setRosterReloadKey] = useState(0);
 
   // Load the roster and the remembered default together; pre-check the last selection.
   useEffect(() => {
     let alive = true;
+    setRosterError(null);
     Promise.all([getRoster(report.projectId), getDistributionDefault(report.projectId)])
       .then(([r, def]) => {
         if (!alive) return;
@@ -125,11 +130,11 @@ export function SendModal({
           }
         }
       })
-      .catch((e) => alive && setError(e instanceof Error ? e.message : String(e)));
+      .catch((e) => alive && setRosterError(e instanceof Error ? e.message : String(e)));
     return () => {
       alive = false;
     };
-  }, [report.projectId]);
+  }, [report.projectId, rosterReloadKey]);
 
   const count = selected.size + adHoc.length;
 
@@ -167,8 +172,20 @@ export function SendModal({
     setSending(true);
     setError(null);
     try {
+      // D-8: report fully-checked companies as ORG selections (the server resolves an
+      // orgId to its current contacts) so the remembered distribution default keeps
+      // tracking future roster additions, instead of degrading to a frozen snapshot of
+      // today's contact ids. Partially-checked companies stay as explicit contactIds.
+      const orgIds: string[] = [];
+      const contactIds = new Set(selected);
+      for (const org of roster ?? []) {
+        if (org.contacts.length > 0 && org.contacts.every((c) => contactIds.has(c.id))) {
+          orgIds.push(org.id);
+          for (const c of org.contacts) contactIds.delete(c.id);
+        }
+      }
       const send = await sendReport(report.id, {
-        selection: { orgIds: [], contactIds: [...selected], adHoc },
+        selection: { orgIds, contactIds: [...contactIds], adHoc },
         message: message.trim() || undefined,
         expiresInDays: 30,
       });
@@ -242,7 +259,20 @@ export function SendModal({
         </p>
       )}
 
-      {!roster ? (
+      {rosterError ? (
+        // Explicit failed-load state: no eternal spinner — show the error with a Retry
+        // (re-runs the load effect via the key). Ad-hoc recipients below stay usable.
+        <div className="alert alert-error" role="alert">
+          <p style={{ margin: 0 }}>Couldn’t load the recipient roster: {rosterError}</p>
+          <button
+            type="button"
+            className="btn btn-secondary btn-sm mt-16"
+            onClick={() => setRosterReloadKey((k) => k + 1)}
+          >
+            Retry
+          </button>
+        </div>
+      ) : !roster ? (
         <Loading message="Loading recipients…" />
       ) : (
         <>
@@ -274,7 +304,12 @@ export function SendModal({
               }
             />
           ))}
+        </>
+      )}
 
+      {/* One-off recipients + message stay usable even when the roster load failed. */}
+      {(roster || rosterError) && (
+        <>
           {adHoc.length > 0 && (
             <div className="sel-org">
               <div className="sel-org-head" style={{ cursor: 'default' }}>

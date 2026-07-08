@@ -326,6 +326,10 @@ export const reportSendRecipients = pgTable(
     firstOpenedAt: timestamp('first_opened_at', { withTimezone: true }),
     lastOpenedAt: timestamp('last_opened_at', { withTimezone: true }),
     openCount: integer('open_count').notNull().default(0),
+    /** Last email-dispatch failure for this recipient (null = last dispatch reached the
+     *  provider OK). Written by the send/resend paths so a Resend rejection surfaces in
+     *  the delivery panel instead of the send silently looking fine (§8). */
+    emailError: text('email_error'),
   },
   (t) => ({
     tokenUq: uniqueIndex('rsr_token_uq').on(t.token),

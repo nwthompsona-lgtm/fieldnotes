@@ -53,6 +53,22 @@ export function canWork(role: 'admin' | ProjectRole | null): boolean {
   return role === 'admin' || role === 'pm' || role === 'super';
 }
 
+/** Whether the caller may edit / finalize / send a SPECIFIC report (D-7: send =
+ *  finalize = edit). Org admin and pm: any report; super: only their OWN (createdBy);
+ *  viewer / visibility-only: never. Shared by ReportsListPage and ReviewPage so the
+ *  two pages can't drift. */
+export function canEditReport(
+  role: 'admin' | ProjectRole | null,
+  report: { createdBy?: string },
+  userId: string,
+): boolean {
+  return (
+    role === 'admin' ||
+    role === 'pm' ||
+    (role === 'super' && report.createdBy === userId)
+  );
+}
+
 const WorkspaceContext = createContext<Workspace | null>(null);
 
 export function useWorkspace(): Workspace {
@@ -119,6 +135,10 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
 
   const switchOrg = useCallback((orgId: string) => {
     persist(LAST_ORG_KEY, orgId);
+    // Clear the previous org's project list in the SAME update as the org change —
+    // leaving it for one render lets HomePage's <Navigate> redirect into the OLD
+    // org's first project before the reload effect runs.
+    setProjects(null);
     setCurrentOrgId(orgId);
   }, []);
 

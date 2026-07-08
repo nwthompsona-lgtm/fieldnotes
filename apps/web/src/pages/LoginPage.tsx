@@ -10,7 +10,9 @@ import { ApiError } from '../api';
 import { AuthScaffold, SsoRow } from '../components/AuthScaffold';
 
 interface LoginNavState {
-  from?: { pathname?: string };
+  /** Where RequireAuth intercepted the visitor — search + hash included so deep links
+   *  like the capture app's /review/:id?send=1 survive the login wall intact. */
+  from?: { pathname?: string; search?: string; hash?: string };
   email?: string;
   notice?: string;
 }
@@ -29,7 +31,13 @@ export function LoginPage() {
     setError(null);
     try {
       await login({ email: email.trim(), password });
-      navigate(state.from?.pathname ?? '/', { replace: true });
+      // Restore the FULL intercepted location (pathname + search + hash), not just the
+      // pathname — dropping ?send=1 would break the capture app's send hand-off.
+      const from = state.from;
+      navigate(
+        from?.pathname ? `${from.pathname}${from.search ?? ''}${from.hash ?? ''}` : '/',
+        { replace: true },
+      );
     } catch (err) {
       if (err instanceof ApiError && err.status === 401) {
         setError('That email or password didn’t match. Try again.');

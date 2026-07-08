@@ -15,6 +15,7 @@ import type { ServerDeps } from './deps.js';
 import { processUpload } from './ingest/index.js';
 import { runPipeline, renderAndStore, ensureArtifacts } from './pipeline.js';
 import { storageKeys } from './storage/types.js';
+import { verifyMediaSignature } from './storage/local.js';
 import { reportQualityMetrics, computeRollup } from './quality.js';
 import { recordRunFeedback } from './observability.js';
 import { registerAuthRoutes } from './auth/routes.js';
@@ -254,7 +255,10 @@ export function registerRoutes(app: FastifyInstance, deps: ServerDeps): void {
       if (!r || !(await authz.canViewReport(req, r))) {
         return reply.code(404).send({ error: 'not found' });
       }
-      return resolveReport(r);
+      // Per-requester edit capability, derived from the report's OWN org/project — the
+      // client can't compute this reliably (its UI state tracks the currently-viewed org,
+      // which misclassifies cross-org reports; verified failure in the Phase 9–12 review).
+      return { ...(await resolveReport(r)), canEdit: await authz.canEditReport(req, r) };
     },
   );
 
@@ -351,11 +355,30 @@ export function registerRoutes(app: FastifyInstance, deps: ServerDeps): void {
   // §6.6: /r/:id is now INTERNAL (session + canViewReport; used by the web app's
   // view/preview). External recipients get capability URLs at /s/:token in Phase 8 —
   // do not reopen /r. 404 on no-access (via loadViewableReport) to avoid leaking ids.
+  // Break-glass (§15.3): the admin surface links here for raw-vs-polished comparison, so
+  // when ADMIN_BREAK_GLASS is on the static token is accepted like on /api/admin/* —
+  // otherwise those links dead-end for an operator whose session isn't in the report's org.
+  const requireAuthOrBreakGlass = async (req: FastifyRequest, reply: FastifyReply) => {
+    if (isBreakGlass(req)) return;
+    return requireAuth(req, reply);
+  };
+  const hostedViewGate = async (
+    id: string,
+    req: FastifyRequest,
+    reply: FastifyReply,
+  ): Promise<boolean> => {
+    if (isBreakGlass(req)) {
+      if (await repo.getReportViewMeta(id)) return true;
+      await reply.code(404).send({ error: 'not found' });
+      return false;
+    }
+    return (await loadViewableReport(id, req, reply)) != null;
+  };
   app.get<{ Params: { id: string } }>(
     '/r/:id',
-    { preHandler: requireAuth },
+    { preHandler: requireAuthOrBreakGlass },
     async (req, reply) => {
-      if (!(await loadViewableReport(req.params.id, req, reply))) return reply;
+      if (!(await hostedViewGate(req.params.id, req, reply))) return reply;
       if (!(await ensureArtifactsFor(req.params.id))) {
         reply.type('text/html');
         return processingPage(req.params.id, base);
@@ -368,9 +391,9 @@ export function registerRoutes(app: FastifyInstance, deps: ServerDeps): void {
 
   app.get<{ Params: { id: string } }>(
     '/r/:id.pdf',
-    { preHandler: requireAuth },
+    { preHandler: requireAuthOrBreakGlass },
     async (req, reply) => {
-      if (!(await loadViewableReport(req.params.id, req, reply))) return reply;
+      if (!(await hostedViewGate(req.params.id, req, reply))) return reply;
       if (!(await ensureArtifactsFor(req.params.id))) return reply.code(425).send({ error: 'not ready' });
       const obj = await storage.get(storageKeys.pdf(req.params.id));
       reply
@@ -384,13 +407,22 @@ export function registerRoutes(app: FastifyInstance, deps: ServerDeps): void {
   // ── Media (local-disk driver serves bytes here; S3/R2 returns signed URLs) ──
   // §6.7: this route is the LOCAL-DISK path only — prod R2 hands out signed URLs that the
   // browser loads directly (no bearer needed), and hosted HTML/PDF embed photos as
-  // data-URLs. Gate each object by the SAME viewability as the report it belongs to
-  // (key = reports/<reportId>/...): any pm/super/viewer/admin who can see the report can
-  // load its media, not just org-admins. 404 (not 403) when unviewable so keys don't leak.
+  // data-URLs. Browsers never attach Authorization to <img>/<audio> loads, so
+  // LocalDiskDriver.url() mints short-lived signed URLs (?exp&sig) that this route
+  // accepts WITHOUT a session — the URL is the capability, mirroring R2. Anything
+  // unsigned/expired/tampered falls back to the session gate: viewability of the OWNING
+  // report (key = reports/<reportId>/...) — any pm/super/viewer/admin who can see the
+  // report can load its media, not just org-admins. 404 (not 403) when unviewable so
+  // keys don't leak.
   app.get('/media/*', async (req, reply) => {
     const key = (req.params as Record<string, string>)['*'];
     if (!key) return reply.code(404).send({ error: 'not found' });
-    if (!isBreakGlass(req)) {
+    const q = req.query as { exp?: string; sig?: string };
+    const signedOk =
+      typeof q.exp === 'string' &&
+      typeof q.sig === 'string' &&
+      verifyMediaSignature(key, Number(q.exp), q.sig);
+    if (!signedOk && !isBreakGlass(req)) {
       if (!req.auth) return reply.code(401).send({ error: 'unauthorized' });
       const m = /^reports\/([^/]+)\//.exec(key);
       const meta = m ? await repo.getReportViewMeta(m[1]!) : null;

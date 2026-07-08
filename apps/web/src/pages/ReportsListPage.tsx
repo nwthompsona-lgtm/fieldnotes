@@ -7,9 +7,9 @@
  * list).
  */
 import { useEffect, useState } from 'react';
-import { Link, useParams } from 'react-router-dom';
+import { Link, Navigate, useParams } from 'react-router-dom';
 import { listReports, type ReportListRow } from '../authApi';
-import { useWorkspace, effectiveRole, canWork } from '../workspace';
+import { useWorkspace, effectiveRole, canWork, canEditReport } from '../workspace';
 import { Avatar, StatusChip, railStatusOf, type RailStatus } from '../components/flux';
 import { Loading, ErrorState } from '../components/ui';
 
@@ -134,6 +134,14 @@ export function ReportsListPage() {
     };
   }, [projectId, reloadKey]);
 
+  // After an org switch, browser-back can land on /p/<old-org-project>/reports. When
+  // the loaded project list doesn't contain the URL's project, bail home instead of
+  // rendering with role=null (viewer-looking affordances for a project we can't query).
+  // Placed after every hook above so the hook order stays stable.
+  if (ws.projects && !project) {
+    return <Navigate to="/" replace />;
+  }
+
   const visible = (rows ?? []).filter((r) => matches(filter, railStatusOf(r)));
 
   if (error) {
@@ -195,15 +203,7 @@ export function ReportsListPage() {
       ) : (
         <div className="rail-list">
           {visible.map((r) => (
-            <RailRow
-              key={r.id}
-              r={r}
-              canEditThis={
-                role === 'admin' ||
-                role === 'pm' ||
-                (role === 'super' && r.createdBy === ws.user.id)
-              }
-            />
+            <RailRow key={r.id} r={r} canEditThis={canEditReport(role, r, ws.user.id)} />
           ))}
         </div>
       )}

@@ -64,8 +64,16 @@ export function finalizeReport(id: string): Promise<Report> {
   );
 }
 
+// Object-URL lifecycle: without revocation every Export PDF tap pins a multi-MB blob for
+// the PWA's lifetime. Revoke on a deferred timer — an immediate revoke would race the new
+// tab's load — and proactively drop the previous export's URL on the next export.
+let lastPdfBlobUrl: string | null = null;
+const PDF_BLOB_URL_TTL_MS = 60_000;
+
 /** Fetch the (session-gated) PDF with the bearer and hand back an object URL a new tab
- *  can display — `window.open(pdfUrl)` alone would 401 since it carries no header. */
+ *  can display — `window.open(pdfUrl)` alone would 401 since it carries no header. The
+ *  URL is revoked ~60s later (and superseded URLs are revoked eagerly), so callers must
+ *  hand it to a window promptly rather than stash it. */
 export async function fetchPdfBlobUrl(id: string): Promise<string> {
   let res: Response;
   try {
@@ -78,5 +86,15 @@ export async function fetchPdfBlobUrl(id: string): Promise<string> {
     throw new Error('Your session has expired — please log in again.');
   }
   if (!res.ok) throw new Error(`Couldn't fetch the PDF (HTTP ${res.status}).`);
-  return URL.createObjectURL(await res.blob());
+  if (lastPdfBlobUrl) {
+    URL.revokeObjectURL(lastPdfBlobUrl); // the previous export's tab has long since loaded
+    lastPdfBlobUrl = null;
+  }
+  const url = URL.createObjectURL(await res.blob());
+  lastPdfBlobUrl = url;
+  setTimeout(() => {
+    URL.revokeObjectURL(url); // idempotent — safe even if the eager path got there first
+    if (lastPdfBlobUrl === url) lastPdfBlobUrl = null;
+  }, PDF_BLOB_URL_TTL_MS);
+  return url;
 }

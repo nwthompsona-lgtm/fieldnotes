@@ -8,9 +8,11 @@
  * …/recipients/:rid/{revoke,resend} manage individual links.
  *
  * External (no session): GET /s/:token(.pdf) is the capability URL mailed to a recipient —
- * validates not-revoked/not-expired, renders on demand, records the first open, and serves
- * expired/revoked pages otherwise. Hosted HTML embeds photos as data-URLs, so external
- * viewers never touch /media (§6.7).
+ * validates not-revoked/not-expired AND that the report is still 'reviewed' (a post-send
+ * edit reverts it to draft; recipients then get a "being updated" page, never mid-edit
+ * content), renders on demand, records the first open, and serves expired/revoked pages
+ * otherwise. Hosted HTML embeds photos as data-URLs, so external viewers never touch
+ * /media (§6.7).
  */
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { SendRequest, type Report, type ReportSend } from '@fieldreport/contracts';
@@ -47,35 +49,47 @@ export function registerSendRoutes(app: FastifyInstance, deps: ServerDeps): void
     return meta;
   };
 
-  /** Email one recipient their personal link (best-effort). From: "<super> via FieldReport",
-   *  reply-to the human who sent it. */
+  /** Email one recipient their personal link (best-effort). Attribution follows the
+   *  ACTUAL sender (the session user): fromName is "<sender> via FieldReport" and
+   *  reply-to points at the same person, so "From" and "replies go straight to" always
+   *  agree — when a PM sends a super's report, replies reach the PM, not the super. The
+   *  report's preparer (superName) still appears where the report content shows it.
+   *  Records the per-recipient dispatch outcome (emailError) so a provider rejection
+   *  surfaces in the delivery panel instead of silently looking sent. */
   const emailRecipient = async (
     req: FastifyRequest,
     report: Report,
-    rec: { name: string; email: string },
+    rec: { id: string; name: string; email: string },
     token: string,
     expiresAt: Date,
     message?: string,
   ): Promise<void> => {
+    const sender = req.auth!.user;
+    const senderName = sender.name?.trim() || sender.email;
     const rendered = shareEmail({
       projectName: report.projectName ?? 'the project',
       date: report.date,
-      senderName: report.superName,
+      senderName,
       recipientName: rec.name,
       message,
       link: `${base}/s/${token}`,
       expiresAt,
     });
-    await sendBestEffort(
+    const outcome = await sendBestEffort(
       deps.email,
       {
         to: { email: rec.email, name: rec.name },
-        fromName: `${report.superName} via FieldReport`,
-        replyTo: req.auth!.user.email ? { email: req.auth!.user.email, name: req.auth!.user.name } : undefined,
+        fromName: `${senderName} via FieldReport`,
+        replyTo: sender.email ? { email: sender.email, name: sender.name } : undefined,
         ...rendered,
       },
       (o, m) => req.log.error(o, m),
     );
+    // Persist the outcome: the failure message on throw, null (cleared) on success.
+    // Best-effort itself — a bookkeeping failure must not fail the send/resend request.
+    await repo
+      .setRecipientEmailError(rec.id, outcome.ok ? null : outcome.error)
+      .catch((err) => req.log.error({ err, recipientId: rec.id }, 'recording email outcome failed'));
   };
 
   // ── Send ────────────────────────────────────────────────────────────────────
@@ -90,6 +104,15 @@ export function registerSendRoutes(app: FastifyInstance, deps: ServerDeps): void
         return reply.code(400).send({ error: 'invalid send', issues: parsed.error.issues });
       }
       const { selection, message, expiresInDays } = parsed.data;
+
+      // A report still transcribing/synthesizing (or failed) must not go out: finalize-
+      // on-send below would render + email a half-processed report and flip it to
+      // reviewed. Only processing='ready' may send — the client polls /status and
+      // enables Send when ready, so a 409 here only catches races/stale UIs.
+      const procStatus = await repo.getReportStatus(req.params.id);
+      if (procStatus?.processing !== 'ready') {
+        return reply.code(409).send({ error: 'not ready' });
+      }
 
       const report = await repo.getReport(req.params.id);
       if (!report) return reply.code(404).send({ error: 'not found' });
@@ -184,7 +207,7 @@ export function registerSendRoutes(app: FastifyInstance, deps: ServerDeps): void
         expiresAt = new Date(Date.now() + 30 * 86_400_000);
         await repo.refreshRecipientToken(req.params.rid, { token, expiresAt });
       }
-      await emailRecipient(req, report, { name: rec.name, email: rec.email }, token, expiresAt);
+      await emailRecipient(req, report, { id: rec.id, name: rec.name, email: rec.email }, token, expiresAt);
       return { ok: true, recipientId: rec.id, resentTo: rec.email };
     },
   );
@@ -238,6 +261,17 @@ export function registerSendRoutes(app: FastifyInstance, deps: ServerDeps): void
       );
       return null;
     }
+    // Post-send edit gate: editing a sent report reverts it to 'draft' and invalidates
+    // the cached artifacts — a recipient reopening a still-valid link must NEVER get
+    // mid-edit content re-rendered (with the DRAFT watermark). Serve the branded
+    // "being updated" page until the report is re-finalized (finalize/send flips it
+    // back to 'reviewed'). Gates BOTH /s/:token and /s/:token.pdf, which each resolve
+    // through here before touching artifacts.
+    const meta = await repo.getReportViewMeta(rec.reportId);
+    if (meta?.status !== 'reviewed') {
+      await servePage(reply, 503, shareStatePage('updating', { sender: await senderFor(rec) }));
+      return null;
+    }
     return { reportId: rec.reportId, expiresAt: rec.expiresAt };
   };
 
@@ -247,10 +281,17 @@ export function registerSendRoutes(app: FastifyInstance, deps: ServerDeps): void
     if (!(await ensureArtifacts(deps, r.reportId))) {
       return servePage(reply, 503, shareStatePage('notready', {}));
     }
+    // Re-check status AFTER ensureArtifacts: an edit committing between resolveShare's
+    // gate and the (possible) re-render above flips status to 'draft' first and deletes
+    // artifacts second, so ensureArtifacts can have just rendered mid-edit content. The
+    // post-render read closes that race — never serve it.
+    const meta = await repo.getReportViewMeta(r.reportId);
+    if (meta?.status !== 'reviewed') {
+      return servePage(reply, 503, shareStatePage('updating', {}));
+    }
     // The HTML view is the canonical "opened" (§8.4) — record it, then serve inside the
     // read-only recipient shell (brand bar + Download PDF + expiry line).
     await repo.recordRecipientOpen(req.params.token);
-    const meta = await repo.getReportViewMeta(r.reportId);
     const project = meta ? await repo.getProject(meta.projectId) : null;
     const obj = await storage.get(storageKeys.html(r.reportId));
     const html = Buffer.from(obj.bytes).toString('utf8');
@@ -269,6 +310,11 @@ export function registerSendRoutes(app: FastifyInstance, deps: ServerDeps): void
     const r = await resolveShare(req.params.token, reply);
     if (!r) return reply;
     if (!(await ensureArtifacts(deps, r.reportId))) return reply.code(503).send({ error: 'not ready' });
+    // Same post-render status re-check as the HTML route (edit race — see above).
+    const meta = await repo.getReportViewMeta(r.reportId);
+    if (meta?.status !== 'reviewed') {
+      return servePage(reply, 503, shareStatePage('updating', {}));
+    }
     // No extra open recorded here — the HTML view is the canonical open (§8.4).
     const obj = await storage.get(storageKeys.pdf(r.reportId));
     reply
@@ -317,7 +363,7 @@ interface ShareSender {
   orgName?: string;
 }
 
-type ShareState = 'expired' | 'revoked' | 'notfound' | 'notready';
+type ShareState = 'expired' | 'revoked' | 'notfound' | 'notready' | 'updating';
 
 const STATE_COPY: Record<
   ShareState,
@@ -347,6 +393,12 @@ const STATE_COPY: Record<
     iconInk: '#2b54e0',
     icon: '<path d="M7 3h7l5 5v13a1 1 0 0 1-1 1H7a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1Z"/><path d="M14 3v5h5"/>',
   },
+  updating: {
+    title: 'This report is being updated',
+    iconBg: '#e7edfc', // primary-soft refresh (transient, like notready)
+    iconInk: '#2b54e0',
+    icon: '<path d="M20.5 12a8.5 8.5 0 1 1-2.5-6"/><path d="M18.5 2.5v4h-4"/>',
+  },
 };
 
 const initialsOf = (name: string): string => {
@@ -357,8 +409,8 @@ const initialsOf = (name: string): string => {
   return (first?.slice(0, 2) ?? '?').toUpperCase();
 };
 
-/** Friendly full-page state (expired / revoked / not-found / not-ready) with a
- *  contact-the-sender card + mailto CTA when the sender is known. */
+/** Friendly full-page state (expired / revoked / not-found / not-ready / updating) with
+ *  a contact-the-sender card + mailto CTA when the sender is known. */
 function shareStatePage(
   state: ShareState,
   opts: { expiresAt?: Date; sender?: ShareSender },
@@ -375,13 +427,15 @@ function shareStatePage(
         ? 'The sender revoked access to this report. The contents are no longer available at this link.'
         : state === 'notfound'
           ? 'This share link is not valid — check that the address matches the one in your email.'
-          : 'This report is still being prepared. Try again in a minute.';
+          : state === 'updating'
+            ? 'The sender is making changes to this report right now. Your link keeps working — check back shortly for the updated version.'
+            : 'This report is still being prepared. Try again in a minute.';
 
   const sender = opts.sender;
   const senderCard = sender
     ? `<div style="background:#ffffff;border:1px solid #e6ebf2;border-radius:12px;padding:15px;margin-top:20px;display:flex;align-items:center;gap:11px;text-align:left;">
 <span style="display:flex;width:40px;height:40px;border-radius:999px;background:#e7edfc;color:#2b54e0;align-items:center;justify-content:center;font-weight:700;font-size:14px;flex:0 0 auto;">${escapeHtml(initialsOf(sender.name))}</span>
-<div style="flex:1;min-width:0;"><div style="font-size:12px;color:#667283;">${state === 'expired' ? 'Need an updated copy? Contact' : 'For an updated copy, contact'}</div><div style="font-weight:600;font-size:14px;color:#10151d;">${escapeHtml(sender.name)}${sender.orgName ? ` · ${escapeHtml(sender.orgName)}` : ''}</div></div>
+<div style="flex:1;min-width:0;"><div style="font-size:12px;color:#667283;">${state === 'expired' ? 'Need an updated copy? Contact' : state === 'updating' ? 'Questions in the meantime? Contact' : 'For an updated copy, contact'}</div><div style="font-weight:600;font-size:14px;color:#10151d;">${escapeHtml(sender.name)}${sender.orgName ? ` · ${escapeHtml(sender.orgName)}` : ''}</div></div>
 </div>`
     : '';
   const senderCta =

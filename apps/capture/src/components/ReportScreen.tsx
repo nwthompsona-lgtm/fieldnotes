@@ -24,7 +24,9 @@ export function ReportScreen({ reportId, online, onBack }: Props) {
   const [draft, setDraft] = useState('');
   const [saving, setSaving] = useState(false);
   const [finalizing, setFinalizing] = useState(false);
-  const [sent, setSent] = useState(false);
+  // "Handed off" — the actual send happens in the web app's Send modal (§8); this only
+  // records that a tab really navigated there (not merely that finalize succeeded).
+  const [handedOff, setHandedOff] = useState(false);
 
   // Poll until the pipeline reaches a terminal state (ready/failed).
   useEffect(() => {
@@ -67,7 +69,7 @@ export function ReportScreen({ reportId, online, onBack }: Props) {
       const updated = await patchReport(reportId, edit);
       setReport(updated);
       setEditing(null);
-      setSent(false); // an edit reverts the report to draft; it must be re-sent
+      setHandedOff(false); // an edit reverts the report to draft; it must be re-sent
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -116,10 +118,29 @@ export function ReportScreen({ reportId, online, onBack }: Props) {
     setError(null);
     try {
       await ensureFinalized();
-      setSent(true);
       const url = `${reviewUrl(reportId)}?send=1`;
-      if (win) win.location.href = url;
-      else window.open(url, '_blank', 'noopener');
+      // Only claim the hand-off when a window actually navigated: the post-await
+      // fallback open() is outside the user gesture, so a popup blocker returns null
+      // WITHOUT throwing — finalization alone must never light up the checkmark.
+      let navigated = false;
+      if (win) {
+        win.location.href = url;
+        navigated = true;
+      } else {
+        // No 'noopener' feature here: window.open ALWAYS returns null with it (per
+        // spec), which would make this success check constant-false. Null the opener
+        // manually instead so the handed-off tab still can't reach back into the PWA.
+        const fallback = window.open(url, '_blank');
+        if (fallback) fallback.opener = null;
+        navigated = fallback != null;
+      }
+      if (navigated) {
+        setHandedOff(true);
+      } else {
+        setError(
+          'Your browser blocked the report window — open this report in the FieldReport web app to send it.',
+        );
+      }
     } catch (e) {
       win?.close();
       setError((e as Error).message);
@@ -346,7 +367,7 @@ export function ReportScreen({ reportId, online, onBack }: Props) {
         >
           {finalizing ? (
             'Sending…'
-          ) : sent ? (
+          ) : handedOff ? (
             <>
               <Icon name="check" size={18} strokeWidth={2.4} />
               Sent

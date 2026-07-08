@@ -69,6 +69,9 @@ beforeAll(async () => {
   const files = new Map<string, Uint8Array>([['p-send', jpeg]]);
   const res = await processUpload({ manifest, files, storage, repo, createdBy: 'adminS' });
   reportId = res.reportId;
+  // The pipeline never runs in this suite — mark the report ready by hand, since send
+  // now 409s on anything still transcribing/synthesizing (half-processed content).
+  await repo.setProcessing(reportId, 'ready');
 });
 
 afterAll(async () => {
@@ -84,6 +87,33 @@ describe('POST /api/reports/:id/send', () => {
 
   it('empty selection → 400', async () => {
     expect((await req('POST', 'adminS', `/api/reports/${reportId}/send`, { selection: { orgIds: [], contactIds: [], adHoc: [] } })).statusCode).toBe(400);
+  });
+
+  it('a report still processing → 409 (never render/email a half-processed report)', async () => {
+    // Fresh upload, pipeline never run: processing stays 'uploaded'.
+    const { repo, storage } = deps;
+    const jpeg = new Uint8Array(await sharp({ create: { width: 8, height: 8, channels: 3, background: { r: 5, g: 5, b: 5 } } }).jpeg().toBuffer());
+    const manifest: UploadManifest = {
+      contractsVersion: '1.2.0',
+      projectId: 'proj_s',
+      superName: 'Jake Romero',
+      date: '2026-07-07',
+      walkId: 'w-send-unready',
+      observations: [
+        { id: 'o-unready', order: 0, createdAt: '2026-07-07T12:00:00.000Z', photos: [{ id: 'p-unready', width: 8, height: 8 }], audioField: 'audio:o-unready', audioMime: 'audio/webm' },
+      ],
+    };
+    const { reportId: unreadyId } = await processUpload({ manifest, files: new Map([['p-unready', jpeg]]), storage, repo, createdBy: 'adminS' });
+
+    const body = { selection: { orgIds: [], contactIds: [], adHoc: [{ name: 'A', email: 'a@x.co' }] } };
+    for (const processing of ['uploaded', 'transcribing', 'synthesizing', 'failed'] as const) {
+      await repo.setProcessing(unreadyId, processing);
+      const res = await req('POST', 'adminS', `/api/reports/${unreadyId}/send`, body);
+      expect(res.statusCode).toBe(409);
+      expect(res.json()).toEqual({ error: 'not ready' });
+    }
+    // Nothing was recorded or mailed for the blocked attempts.
+    expect(await deps.repo.listSendsForReport(unreadyId)).toEqual([]);
   });
 
   it('resolves the selection (deduped), finalizes, remembers the default, mails everyone', async () => {
@@ -104,10 +134,13 @@ describe('POST /api/reports/:id/send', () => {
     expect((await deps.repo.getReportViewMeta(reportId))?.status).toBe('reviewed');
     // Default remembered for next time.
     expect(await deps.repo.getDistributionDefault('proj_s')).toMatchObject({ orgIds: ['sto_s'] });
-    // One email per recipient, From "<super> via FieldReport".
+    // One email per recipient, attributed to the ACTUAL sender (the session user, who
+    // is also the reply-to) — not the report's preparer.
     const sent = deps.email.sent.slice(before);
     expect(sent).toHaveLength(3);
-    expect(sent.every((m) => m.fromName === 'Jake Romero via FieldReport')).toBe(true);
+    expect(sent.every((m) => m.fromName === 'Name adminS via FieldReport')).toBe(true);
+    expect(sent.every((m) => m.replyTo?.email === 'admins@x.com')).toBe(true); // repo lowercases
+    expect(sent.every((m) => m.text.includes('Name adminS shared'))).toBe(true);
   }, 30_000); // finalize-on-send renders HTML+PDF (Playwright) — well over the 5s default
 });
 
@@ -184,5 +217,75 @@ describe('delivery audit + revoke + resend', () => {
     const newToken = tokenFromEmailTo('adhoc@guest.co');
     expect(newToken).not.toBe(token);
     expect((await app.inject({ method: 'GET', url: `/s/${newToken}` })).statusCode).toBe(200);
+  });
+});
+
+describe('post-send edit gate on /s (report reverted to draft)', () => {
+  it('a still-valid link serves the "being updated" page — never mid-edit content', async () => {
+    const token = tokenFromEmailTo(C1_EMAIL);
+    // An edit reverts the sent report to 'draft' (review gate). The recipient's link is
+    // still valid, but must NOT re-render draft content with the DRAFT watermark.
+    await deps.repo.applyEdit(reportId, { summary: 'mid-edit summary' });
+    const opensBefore = (await deps.repo.getRecipientByToken(token))!.openCount;
+
+    const html = await app.inject({ method: 'GET', url: `/s/${token}` });
+    expect(html.statusCode).toBe(503);
+    expect(html.headers['content-type']).toContain('text/html');
+    expect(html.body).toContain('This report is being updated');
+    expect(html.body).not.toContain('Shared with you'); // the report shell never renders
+    expect(html.body).not.toContain('mid-edit summary');
+
+    // Same gate on the PDF sibling.
+    const pdf = await app.inject({ method: 'GET', url: `/s/${token}.pdf` });
+    expect(pdf.statusCode).toBe(503);
+    expect(pdf.body).toContain('This report is being updated');
+
+    // The blocked view records no open.
+    expect((await deps.repo.getRecipientByToken(token))!.openCount).toBe(opensBefore);
+
+    // Re-finalizing restores the link (artifacts were still cached in this suite).
+    await deps.repo.finalize(reportId);
+    const restored = await app.inject({ method: 'GET', url: `/s/${token}` });
+    expect(restored.statusCode).toBe(200);
+    expect(restored.body).toContain('Shared with you');
+  }, 30_000); // allow a re-render if the artifact cache missed
+});
+
+describe('per-recipient email dispatch outcome (emailError)', () => {
+  const FAIL_EMAIL = 'bounce@guest.co';
+
+  it('a provider rejection still yields 201 but records emailError on the recipient', async () => {
+    const originalSend = deps.email.send.bind(deps.email);
+    deps.email.send = async () => {
+      throw new Error('provider rejected: from-domain not verified');
+    };
+    try {
+      const body = { selection: { orgIds: [], contactIds: [], adHoc: [{ name: 'Bounce', email: FAIL_EMAIL }] } };
+      const res = await req('POST', 'adminS', `/api/reports/${reportId}/send`, body);
+      expect(res.statusCode).toBe(201); // per-recipient best-effort: the send itself succeeds
+      const send = res.json() as { recipients: Array<{ id: string; email: string; emailError?: string }> };
+      const rec = send.recipients.find((r) => r.email === FAIL_EMAIL)!;
+      // The DTO carries the failure so the delivery panel can say "email failed".
+      expect(rec.emailError).toBe('provider rejected: from-domain not verified');
+      expect((await deps.repo.getRecipientById(rec.id))?.emailError).toBe(
+        'provider rejected: from-domain not verified',
+      );
+    } finally {
+      deps.email.send = originalSend;
+    }
+  }, 30_000);
+
+  it('a later successful resend clears the recorded failure', async () => {
+    const sends = await deps.repo.listSendsForReport(reportId);
+    const rec = sends.flatMap((s) => s.recipients).find((r) => r.email === FAIL_EMAIL)!;
+    expect(rec.emailError).toBeTruthy(); // still failed from the previous test
+
+    const res = await req('POST', 'adminS', `/api/reports/${reportId}/recipients/${rec.id}/resend`);
+    expect(res.statusCode).toBe(200);
+    expect((await deps.repo.getRecipientById(rec.id))?.emailError).toBeNull();
+    const after = (await deps.repo.listSendsForReport(reportId))
+      .flatMap((s) => s.recipients)
+      .find((r) => r.id === rec.id)!;
+    expect(after.emailError).toBeUndefined(); // absent in the DTO once cleared
   });
 });

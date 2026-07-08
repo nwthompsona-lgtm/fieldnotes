@@ -16,7 +16,7 @@ import {
 } from './repo';
 import { useOnline } from './hooks/useOnline';
 import { useTheme } from './hooks/useTheme';
-import { useSessionToken, useActiveProject } from './hooks/useWorkspace';
+import { useSessionToken, useAccount, useActiveProject } from './hooks/useWorkspace';
 import { me } from './lib/authApi';
 import { setAccount } from './lib/session';
 
@@ -32,8 +32,18 @@ export function App() {
 
   // Auth + project gates (Phase 11 / F3): session bearer → picked project → capture.
   const sessionToken = useSessionToken();
-  const activeProject = useActiveProject();
+  const account = useAccount();
+  const pickedProject = useActiveProject();
   const [repicking, setRepicking] = useState(false);
+
+  // Workspace state is bound to the account that picked it: a 401-forced logout clears
+  // only the session (walks in IndexedDB survive by design), so a persisted activeProject
+  // would otherwise leak into the NEXT login — possibly a different account on a shared
+  // device — skipping the picker and capturing into the previous user's project. A
+  // mismatched owner (or a legacy record without one, handled in getActiveProject) is
+  // treated as unset, which re-opens the picker.
+  const activeProject =
+    pickedProject && account && pickedProject.ownerUserId === account.id ? pickedProject : null;
 
   const [walkId, setWalkId] = useState<string | null>(null);
   const [pendingWalkId, setPendingWalkId] = useState<string | null>(null);

@@ -8,25 +8,34 @@ import { SESSION_TOKEN_KEY } from './config';
 
 const listeners = new Set<() => void>();
 
-/** The persisted session bearer, or null when logged out. */
+/** In-memory fallback for the token when localStorage is blocked (private mode /
+ *  storage-disabled). Always maintained alongside the persisted copy so a failed
+ *  setItem doesn't silently loop the user back to login — the session then simply
+ *  lives only as long as this tab. */
+let memoryToken: string | null = null;
+
+/** The persisted session bearer (in-memory fallback when storage is blocked), or null
+ *  when logged out. */
 export function getSessionToken(): string | null {
   try {
-    return localStorage.getItem(SESSION_TOKEN_KEY);
+    return localStorage.getItem(SESSION_TOKEN_KEY) ?? memoryToken;
   } catch {
-    return null; // private-mode / storage-disabled: treat as logged out
+    return memoryToken;
   }
 }
 
 export function setSessionToken(token: string): void {
+  memoryToken = token;
   try {
     localStorage.setItem(SESSION_TOKEN_KEY, token);
   } catch {
-    /* storage unavailable — the token lives only for this tab's memory of it */
+    /* storage unavailable — memoryToken above keeps the session for this tab */
   }
   emit();
 }
 
 export function clearSession(): void {
+  memoryToken = null;
   try {
     localStorage.removeItem(SESSION_TOKEN_KEY);
   } catch {
@@ -52,9 +61,13 @@ function emit(): void {
   for (const fn of listeners) fn();
 }
 
-// Reflect logout/login performed in another tab.
+// Reflect logout/login performed in another tab. Mirror the change into the in-memory
+// fallback too, so it can't resurrect a token another tab just cleared.
 if (typeof window !== 'undefined') {
   window.addEventListener('storage', (e) => {
-    if (e.key === SESSION_TOKEN_KEY) emit();
+    if (e.key === SESSION_TOKEN_KEY) {
+      memoryToken = e.newValue;
+      emit();
+    }
   });
 }

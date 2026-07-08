@@ -71,7 +71,9 @@ export async function processUpload(args: ProcessUploadArgs): Promise<UploadResu
   }
 
   // A user-named project must have a Project row before the report's FK can point at it.
-  // (v1.0.0 clients send no projectName and rely on the seeded pilot project.)
+  // (v1.0.0 clients send no projectName and rely on the seeded pilot project.) Create-if-
+  // missing ONLY: an existing project's name/superName is never updated from a manifest —
+  // the client echoes a possibly-stale cached picker label, and renames are admin/pm-only.
   if (manifest.projectName?.trim()) {
     await repo.ensureProjectFromUpload({
       id: manifest.projectId,

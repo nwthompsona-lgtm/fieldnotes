@@ -174,6 +174,7 @@ CREATE TABLE IF NOT EXISTS report_send_recipients (
 );
 CREATE UNIQUE INDEX IF NOT EXISTS rsr_token_uq ON report_send_recipients (token);
 CREATE INDEX IF NOT EXISTS rsr_send_idx ON report_send_recipients (send_id);
+ALTER TABLE report_send_recipients ADD COLUMN IF NOT EXISTS email_error text;
 ALTER TABLE projects ADD COLUMN IF NOT EXISTS org_id text;
 ALTER TABLE projects ADD COLUMN IF NOT EXISTS visibility text NOT NULL DEFAULT 'assigned';
 ALTER TABLE projects ADD COLUMN IF NOT EXISTS created_at timestamptz NOT NULL DEFAULT now();

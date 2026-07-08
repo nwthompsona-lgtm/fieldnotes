@@ -31,12 +31,15 @@ export async function sendBestEffort(
   email: EmailDriver,
   msg: EmailMessage,
   log: (obj: unknown, msg: string) => void,
-): Promise<{ ok: boolean }> {
+): Promise<{ ok: true } | { ok: false; error: string }> {
   try {
     await email.send(msg);
     return { ok: true };
   } catch (err) {
     log({ err }, 'email send failed (continuing)');
-    return { ok: false };
+    // Surface WHY it failed so callers that track per-recipient delivery (send.ts) can
+    // persist the message — a swallowed rejection made the delivery panel look fine
+    // while the provider never accepted the email.
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
   }
 }

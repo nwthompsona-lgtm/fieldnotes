@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Icon } from './Icon';
 import { PhotoThumb } from './PhotoThumb';
 import { db } from '../db';
@@ -6,7 +6,8 @@ import { getObservationsForWalk, getWalk, setWalkDetails } from '../repo';
 import { syncWalk } from '../sync';
 import { recordSubmittedReport } from '../lib/reports';
 import { getAccount } from '../lib/session';
-import { getActiveProject, recordCapture } from '../lib/activeProject';
+import { recordCapture } from '../lib/activeProject';
+import { useActiveProject } from '../hooks/useWorkspace';
 import { formatBytes, formatLongDate } from '../lib/format';
 import { walkByteSize } from '../repo';
 import { getReportStatus } from '../lib/api';
@@ -49,21 +50,32 @@ interface Props {
   onNewWalk: () => void;
 }
 
-/** Review & sync: walk metadata is read-only — project comes from the picker, preparer
- *  from the logged-in account (design §CAPTURE "Review change") — then upload with live
- *  progress and hand off to the in-app report. */
+/** Review & sync: walk metadata is read-only — stamped ONCE from the picker + the
+ *  logged-in account (design §CAPTURE "Review change"); after that the walk's own stored
+ *  attribution is the truth — then upload with live progress and hand off to the in-app
+ *  report. */
 export function ReviewScreen({ pendingWalkId, online, onBack, onOpenReport, onNewWalk }: Props) {
   const [thumbs, setThumbs] = useState<string[]>([]);
   const [count, setCount] = useState(0);
   const [bytes, setBytes] = useState(0);
   const [date, setDate] = useState('');
 
-  // Provenance (design: "From picker" / "From login"). Both gates precede this screen,
-  // so these are present in practice; the null fallbacks just keep a cleared-storage
-  // edge case from syncing unattributed data.
+  // Provenance (design: "From picker" / "From login") — inputs to the ONE-TIME stamp
+  // below. Both gates precede this screen, so these are present in practice; the null
+  // fallbacks just keep a cleared-storage edge case from syncing unattributed data.
+  // useActiveProject (not a render-time read) so the initial stamp sees live picker
+  // changes, including from another tab.
   const account = getAccount();
-  const activeProject = getActiveProject();
+  const activeProject = useActiveProject();
   const preparerName = account ? account.name?.trim() || account.email : '';
+
+  // The walk's OWN stored attribution — what Review displays and what sync uploads (the
+  // manifest is built from the store). Null until hydrated/stamped.
+  const [stamped, setStamped] = useState<{
+    projectId: string;
+    projectName: string;
+    superName: string;
+  } | null>(null);
 
   const [running, setRunning] = useState(false);
   const [pct, setPct] = useState(0);
@@ -94,19 +106,58 @@ export function ReviewScreen({ pendingWalkId, online, onBack, onOpenReport, onNe
     };
   }, [pendingWalkId]);
 
-  // Stamp the account + picked project onto the durable walk row, so sync (which builds
-  // the manifest from the store) and a crash-recovered walk both carry the right
-  // attribution. Re-stamps if the user switches projects and comes back.
+  // Stamp the account + picked project onto the durable walk row ONCE — only when the
+  // walk has no projectId yet — so sync (which builds the manifest from the store) and a
+  // crash-recovered walk both carry the right attribution. After that the walk's own
+  // stored attribution is the truth: re-stamping from the live picker would silently
+  // re-attribute a finished walk (possibly across orgs, or to a different account after a
+  // forced logout) just because a different project is picked before syncing. Moving a
+  // pending walk between projects is deliberately unsupported for now.
+  const stampAttempted = useRef(false);
   useEffect(() => {
-    if (!activeProject || !preparerName) return;
-    void setWalkDetails(pendingWalkId, {
-      superName: preparerName,
-      projectName: activeProject.projectName,
-      projectId: activeProject.projectId,
+    let alive = true;
+    (async () => {
+      const walk = await getWalk(pendingWalkId);
+      if (!alive || !walk) return;
+      if (walk.projectId) {
+        // Already attributed — surface the stored values; ignore the live picker.
+        setStamped({
+          projectId: walk.projectId,
+          projectName: walk.projectName,
+          superName: walk.superName,
+        });
+        return;
+      }
+      if (!activeProject || !preparerName) return;
+      // One stamp attempt per mount: a re-run (project switch) racing the in-flight
+      // write must not stamp a second, different attribution.
+      if (stampAttempted.current) return;
+      stampAttempted.current = true;
+      const details = {
+        projectId: activeProject.projectId,
+        projectName: activeProject.projectName,
+        superName: preparerName,
+      };
+      try {
+        await setWalkDetails(pendingWalkId, details);
+      } catch (e) {
+        // A transient IndexedDB failure must stay retryable — a latched failure would
+        // leave Sync disabled with no message for the lifetime of the mount.
+        stampAttempted.current = false;
+        if (alive) setErrorMsg((e as Error).message || 'Could not save walk details — retry.');
+        return;
+      }
+      if (alive) setStamped(details);
+    })().catch(() => {
+      // getWalk rejected (transient IndexedDB error): leave state untouched — the next
+      // effect run (dep change/remount) retries; nothing was latched yet.
     });
-  }, [pendingWalkId, activeProject?.projectId, preparerName]);
+    return () => {
+      alive = false;
+    };
+  }, [pendingWalkId, activeProject, preparerName]);
 
-  const detailsReady = activeProject != null && preparerName.length > 0;
+  const detailsReady = stamped != null;
 
   async function runSync() {
     if (!detailsReady || !online) return;
@@ -120,7 +171,9 @@ export function ReviewScreen({ pendingWalkId, online, onBack, onOpenReport, onNe
         if (p.phase === 'uploading') setPct(Math.round((p.fraction ?? 0) * 50));
       });
       recordSubmittedReport(result.reportId, count);
-      if (activeProject) recordCapture(activeProject.projectId);
+      // History records the project the WALK synced into (its stored attribution), not
+      // whatever the picker currently shows.
+      if (stamped) recordCapture(stamped.projectId);
       setReportId(result.reportId);
       setPct(50);
       // Second half: the server writes the report (transcribe → synthesize → render).
@@ -204,11 +257,13 @@ export function ReviewScreen({ pendingWalkId, online, onBack, onOpenReport, onNe
           )}
         </div>
 
-        {/* Report details — read-only, sourced from the picker + the login (F3). */}
+        {/* Report details — read-only, showing the WALK's stored attribution (stamped
+            once from the picker + the login, F3). Switching the picker's project after
+            the stamp does NOT move this walk. */}
         <div className="meta-card">
           <div className="meta-row">
             <span className="k">Project</span>
-            <span className="v">{activeProject?.projectName ?? '—'}</span>
+            <span className="v">{stamped?.projectName || '—'}</span>
             <span className="locked-badge">
               <Icon name="lock" size={10} strokeWidth={2.4} />
               From picker
@@ -216,7 +271,7 @@ export function ReviewScreen({ pendingWalkId, online, onBack, onOpenReport, onNe
           </div>
           <div className="meta-row">
             <span className="k">Preparer</span>
-            <span className="v">{preparerName || '—'}</span>
+            <span className="v">{stamped?.superName || '—'}</span>
             <span className="locked-badge">
               <Icon name="lock" size={10} strokeWidth={2.4} />
               From login
@@ -270,7 +325,9 @@ export function ReviewScreen({ pendingWalkId, online, onBack, onOpenReport, onNe
                 {errorMsg}
               </p>
             )}
-            {!detailsReady && (
+            {/* Only nag when a stamp input is truly missing — `stamped` is also briefly
+                null while the walk row hydrates, which needs no user action. */}
+            {!detailsReady && (!activeProject || !preparerName) && (
               <p className="muted" style={{ fontSize: 13, marginBottom: 0 }}>
                 Log in and pick a project to sync.
               </p>

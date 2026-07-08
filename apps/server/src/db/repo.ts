@@ -246,15 +246,17 @@ export function makeRepo(db: Db): Repo {
     },
 
     async ensureProjectFromUpload(p) {
-      // Insert with the column defaults (empty glossary, base lexicon ref). On conflict,
-      // only refresh the human fields — the glossary is curated/accumulated and must survive.
+      // Insert with the column defaults (empty glossary, base lexicon ref). CREATE-IF-
+      // MISSING ONLY: on conflict nothing is written. The manifest's projectName is a
+      // possibly-stale cached picker label, and renames are admin/pm-only per the
+      // permission matrix — a capture-rights upload must never rename an existing
+      // project (or clobber a server-side rename) org-wide. Creation is kept for
+      // deploy-order compatibility with clients that name a project before the server
+      // row exists.
       await db
         .insert(projects)
         .values({ id: p.id, name: p.name, superName: p.superName })
-        .onConflictDoUpdate({
-          target: projects.id,
-          set: { name: p.name, superName: p.superName },
-        });
+        .onConflictDoNothing({ target: projects.id });
     },
 
     async createReportFromUpload(manifest: UploadManifest, media: IngestMediaKeys, opts) {
@@ -702,15 +704,39 @@ export function makeRepo(db: Db): Repo {
       }));
     },
 
-    async updateMembershipRole(userId, orgId, orgRole) {
-      await db
-        .update(memberships)
-        .set({ orgRole })
-        .where(and(eq(memberships.userId, userId), eq(memberships.orgId, orgId)));
+    async updateMembershipRoleGuarded(userId, orgId, orgRole) {
+      return db.transaction(async (tx) => {
+        // Last-admin lockout, enforced atomically: lock the org's ADMIN membership rows
+        // (SELECT ... FOR UPDATE) so two concurrent demote/remove requests serialize
+        // here — the count below can never go stale between the check and the write.
+        // (A plain check-then-act let concurrent demotes drive an org to zero admins.)
+        const admins = await tx
+          .select({ userId: memberships.userId })
+          .from(memberships)
+          .where(and(eq(memberships.orgId, orgId), eq(memberships.orgRole, 'admin')))
+          .for('update');
+        const demotesAnAdmin = orgRole !== 'admin' && admins.some((a) => a.userId === userId);
+        if (demotesAnAdmin && admins.length <= 1) return 'last-admin' as const;
+        await tx
+          .update(memberships)
+          .set({ orgRole })
+          .where(and(eq(memberships.userId, userId), eq(memberships.orgId, orgId)));
+        return 'ok' as const;
+      });
     },
 
-    async removeMembership(userId, orgId) {
-      await db.transaction(async (tx) => {
+    async removeMembershipGuarded(userId, orgId) {
+      return db.transaction(async (tx) => {
+        // Same atomic admin-row lock as updateMembershipRoleGuarded (see there):
+        // removing the sole remaining admin must lose the race, not win it.
+        const admins = await tx
+          .select({ userId: memberships.userId })
+          .from(memberships)
+          .where(and(eq(memberships.orgId, orgId), eq(memberships.orgRole, 'admin')))
+          .for('update');
+        if (admins.some((a) => a.userId === userId) && admins.length <= 1) {
+          return 'last-admin' as const;
+        }
         // Drop the user's assignments on THIS org's projects only — assignments in the
         // user's other orgs are untouched.
         await tx.delete(projectMembers).where(
@@ -725,15 +751,8 @@ export function makeRepo(db: Db): Repo {
         await tx
           .delete(memberships)
           .where(and(eq(memberships.userId, userId), eq(memberships.orgId, orgId)));
+        return 'ok' as const;
       });
-    },
-
-    async countOrgAdmins(orgId) {
-      const rows = await db
-        .select({ userId: memberships.userId })
-        .from(memberships)
-        .where(and(eq(memberships.orgId, orgId), eq(memberships.orgRole, 'admin')));
-      return rows.length;
     },
 
     // invitations
@@ -1250,6 +1269,15 @@ export function makeRepo(db: Db): Repo {
         .where(eq(reportSendRecipients.id, id));
     },
 
+    async setRecipientEmailError(id, error) {
+      // Per-recipient dispatch outcome (§8): the failure message when the provider
+      // rejected, null after a later successful (re)send clears it.
+      await db
+        .update(reportSendRecipients)
+        .set({ emailError: error })
+        .where(eq(reportSendRecipients.id, id));
+    },
+
     async recordRecipientOpen(token) {
       await db
         .update(reportSendRecipients)
@@ -1313,6 +1341,8 @@ export function makeRepo(db: Db): Repo {
             firstOpenedAt: rec.firstOpenedAt ? iso(rec.firstOpenedAt) : undefined,
             revokedAt: rec.revokedAt ? iso(rec.revokedAt) : undefined,
             openCount: rec.openCount,
+            // Absent = last dispatch reached the provider OK (contract: nullable+optional).
+            emailError: rec.emailError ?? undefined,
           }))
           .sort((a, b) => a.name.localeCompare(b.name)),
       }));
