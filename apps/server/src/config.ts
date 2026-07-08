@@ -105,8 +105,10 @@ export const config = {
 
   app: {
     /** Web SPA base for invite-accept links (§10). Distinct from publicBaseUrl (the API
-     *  origin): invite links land on the web app, share links land on the server's /s. */
-    webBaseUrl: env.WEB_BASE_URL?.replace(/\/$/, ''),
+     *  origin): invite links land on the web app, share links land on the server's /s.
+     *  A BLANK env var (how dashboards store an empty prompt) must behave like unset —
+     *  '' would slip past the ?? fallback and mint relative /accept links in emails. */
+    webBaseUrl: env.WEB_BASE_URL?.trim() ? env.WEB_BASE_URL.trim().replace(/\/$/, '') : undefined,
   },
 
   cors: {
