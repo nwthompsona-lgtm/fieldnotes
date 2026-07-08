@@ -137,3 +137,31 @@ Scope: the external recipient view shell around the hosted report (Download PDF,
 
 Rules: work on `develop` only; match the design system; the report body itself is already built (don't redesign it). Verify the expired/revoked/normal states + email rendering, then deploy to dev. When done: update the build tracker (§14.4) to ✅; commit to `develop`; report what changed. (Prereq: Phase 8 done; design zip present.)
 ```
+
+### Phase 13a — One app: merge capture into web  (user directive 2026-07-08)
+
+```text
+Read AUTH_MULTITENANCY_PLAN.md §17 (the decided architecture) and §14.4 (what's already built). Then execute Phase 13a.
+
+Goal: capture and web become ONE app served from ONE origin (the web app). Report creation stays mobile-only (the capture flow); view/edit/send/resend/delivery/settings work from any browser, including phones. The cross-origin hand-off (and its second login) dies.
+
+Scope — in apps/web:
+1. Port apps/capture/src into apps/web/src/capture/ (repo.ts Dexie store, sync.ts, lib/*, hooks, components/screens). Capture's App.tsx becomes CaptureApp.tsx mounted at the /capture route, OUTSIDE the AppShell (full-screen mobile flow, keeps its own Onboarding install gate + login + project picker). The install gate wraps ONLY /capture — management routes must work in a plain mobile browser tab.
+2. One session: keep apps/web/src/session.ts as the single token store. Rewrite capture/lib/session.ts as a thin adapter over it (same subscribe/emit semantics) and keep capture's offline account cache (cached PublicUser; only a real 401 clears). Capture's LoginScreen stays (mobile-designed) but lands the session in the unified store.
+3. capture/config.ts re-exports the web API_BASE; reviewUrl(id) becomes the internal path /review/:id. ReportScreen's Send/hand-off and any window.open to the web app become react-router navigation (?send=1 still opens the Send modal).
+4. PWA moves to web: vite-plugin-pwa dep + config (manifest name FieldReport, start_url /capture so the installed icon opens into the capture flow), registerSW in web main.tsx, icons/public assets. Precache includes the whole SPA so management pages load offline too (data still needs network).
+5. CSS scoping — capture/styles.css and web/styles.css both define global classes (.btn, .screen, …) with DIFFERENT rules; a naive double-import breaks both UIs. Decided approach: add postcss-prefix-selector (devDep, apps/web) configured via includeFiles to prefix ONLY the ported capture stylesheet with .cap; CaptureApp renders inside <div className="cap">. Drop capture's :root/dark token blocks (web already has the same Flux tokens) but port capture-only vars (--safe-* insets) into web's tokens.
+6. Do NOT delete apps/capture yet — leave it building (it still serves the old origin until the pilot re-installs from the new one). The dev capture URL gets a redirect later; CORS keeps both origins during the transition (env var, no code change).
+
+Rules: work on develop only; no server/API changes expected (flag it if one becomes necessary); capture behavior must be pixel/flow-identical at /capture (375x812, both themes, offline boot, pending-walk auto-surface, authenticated sync). Verify with the preview workflow: /capture full flow (login → picker → home → capture screen → review) AND the management pages unchanged, desktop + mobile viewport. Server tests stay green. When done: update §14.4 to ✅; commit to develop; report what changed. (Prereq: Phases 9–12 + review fixes done — 07ed6b2.)
+```
+
+### Phase 13b — Mobile pass on the management surfaces
+
+```text
+Read AUTH_MULTITENANCY_PLAN.md §17 and the §14.4 entry for Phase 13a. Then execute Phase 13b.
+
+Scope: make the management half of the unified app work properly on a phone — reports list, review page, Send modal, Delivery panel, Settings (members/projects/stakeholders), org/project switchers. 375px viewport: no horizontal overflow, touch targets per the capture standards (≥44px), modals usable as sheets, tables collapse to cards where needed. Both themes.
+
+Rules: work on develop only; match the Flux design system; don't change behavior, only responsive presentation. Verify every listed surface at 375x812 + desktop in the preview workflow. When done: update §14.4 to ✅; commit to develop; report what changed. (Prereq: 13a done.)
+```
