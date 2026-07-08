@@ -234,31 +234,33 @@ export function ProjectsPage() {
           const c = counts.get(p.id);
           return (
             <div className="settings-row" key={p.id}>
-              <span style={{ flex: 1, minWidth: 0 }}>
+              <span className="settings-main">
                 <span style={{ fontWeight: 700 }}>{p.name}</span>
                 <br />
                 <span className="muted small">
                   {c ? `${c.members} ${c.members === 1 ? 'member' : 'members'} · ${c.roster} stakeholder ${c.roster === 1 ? 'company' : 'companies'}` : '…'}
                 </span>
               </span>
-              <button
-                type="button"
-                className="btn btn-ghost btn-sm"
-                onClick={() => setRosterFor(p)}
-              >
-                Stakeholders
-              </button>
-              <select
-                className="input"
-                style={{ width: 150 }}
-                value={p.visibility ?? 'assigned'}
-                disabled={busy}
-                title={VISIBILITY_HELP[p.visibility ?? 'assigned']}
-                onChange={(e) => void changeVisibility(p, e.target.value as ProjectVisibility)}
-              >
-                <option value="assigned">Assigned-only</option>
-                <option value="org">Org-visible</option>
-              </select>
+              <div className="settings-controls">
+                <button
+                  type="button"
+                  className="btn btn-ghost btn-sm"
+                  onClick={() => setRosterFor(p)}
+                >
+                  Stakeholders
+                </button>
+                <select
+                  className="input"
+                  style={{ width: 150 }}
+                  value={p.visibility ?? 'assigned'}
+                  disabled={busy}
+                  title={VISIBILITY_HELP[p.visibility ?? 'assigned']}
+                  onChange={(e) => void changeVisibility(p, e.target.value as ProjectVisibility)}
+                >
+                  <option value="assigned">Assigned-only</option>
+                  <option value="org">Org-visible</option>
+                </select>
+              </div>
             </div>
           );
         })}

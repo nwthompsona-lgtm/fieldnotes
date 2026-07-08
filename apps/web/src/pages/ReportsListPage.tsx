@@ -193,11 +193,18 @@ export function ReportsListPage() {
         <div className="empty">
           <h2>{filter === 'all' ? 'No reports yet' : 'Nothing here'}</h2>
           <p>
-            {filter === 'all'
-              ? writable
-                ? 'Start a walk on your phone — reports land here as soon as they upload.'
-                : 'Finalized reports will appear here.'
-              : 'Try a different filter.'}
+            {filter === 'all' ? (
+              writable ? (
+                <>
+                  <Link to="/capture">Start a walk</Link> — reports land here as soon as
+                  they upload.
+                </>
+              ) : (
+                'Finalized reports will appear here.'
+              )
+            ) : (
+              'Try a different filter.'
+            )}
           </p>
         </div>
       ) : (

@@ -56,14 +56,14 @@ function Row({
         <span className="deliv-status unopened">Not opened</span>
       )}
       {!revoked && (
-        <>
+        <div className="deliv-actions">
           <button type="button" className="btn btn-secondary btn-sm" disabled={busy} onClick={onResend}>
             Resend
           </button>
           <button type="button" className="btn btn-ghost btn-sm" disabled={busy} onClick={onRevoke} style={{ color: 'var(--danger)' }}>
             Revoke
           </button>
-        </>
+        </div>
       )}
     </div>
   );
@@ -154,7 +154,7 @@ export function DeliveryPage() {
         const unopened = active.filter((r) => !r.firstOpenedAt);
         return (
           <div className="card" key={send.id}>
-            <div className="row" style={{ gap: 14 }}>
+            <div className="row deliv-head" style={{ gap: 14 }}>
               <div>
                 <h2 style={{ marginBottom: 2 }}>
                   Sent {fmtWhen(send.sentAt)}

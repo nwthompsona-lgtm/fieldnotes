@@ -78,6 +78,9 @@ export function AdminListPage() {
       {state.reports.length === 0 ? (
         <div className="card muted">No reports yet. Once a walk is uploaded it appears here.</div>
       ) : (
+        // Wide operator table: scrolls in its own container on narrow screens
+        // (styles.css .table-scroll) so the page itself never scrolls sideways.
+        <div className="table-scroll">
         <table className="report-table">
           <thead>
             <tr>
@@ -110,6 +113,7 @@ export function AdminListPage() {
               ))}
           </tbody>
         </table>
+        </div>
       )}
     </div>
   );

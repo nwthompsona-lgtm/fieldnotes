@@ -133,6 +133,19 @@ export function AppShell() {
           )}
 
           <div className="topbar-right">
+            {/* Into the capture flow (Phase 13b): the walk surface lives at /capture
+                in this same app — one tap from anywhere in management. */}
+            <Link
+              to="/capture"
+              className="icon-btn"
+              aria-label="Start a walk (capture)"
+              title="Start a walk"
+            >
+              <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M4 8h3l2-2.5h6L17 8h3a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V9a1 1 0 0 1 1-1Z" />
+                <circle cx="12" cy="13.5" r="3.2" />
+              </svg>
+            </Link>
             <ThemeToggle />
             {/* User menu */}
             <Dropdown
@@ -145,6 +158,9 @@ export function AppShell() {
                 <>
                   <div className="menu-head">{ws.user.name ?? ws.user.email}</div>
                   <div className="menu-note">{ws.user.email}</div>
+                  <Link to="/capture" className="menu-item" role="menuitem" onClick={close}>
+                    Start a walk
+                  </Link>
                   <Link to="/account" className="menu-item" role="menuitem" onClick={close}>
                     Account
                   </Link>

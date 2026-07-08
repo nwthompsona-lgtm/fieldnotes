@@ -297,7 +297,9 @@ export function MembersPage() {
           </button>
         )}
       </div>
-      <div className="table-scroll">
+      {/* Desktop: the usual table. ≤640px: .table-cards collapses each row into a
+          card (thead hidden, td stacked, data-label as the field caption). */}
+      <div className="table-scroll table-cards">
       <table className="report-table">
         <thead>
           <tr>
@@ -320,7 +322,7 @@ export function MembersPage() {
                   </span>
                 </span>
               </td>
-              <td>
+              <td data-label="Org role">
                 {isAdmin && m.user.id !== ws.user.id ? (
                   <select
                     className="input btn-sm"
@@ -338,7 +340,7 @@ export function MembersPage() {
                   <RoleBadge role={m.orgRole} />
                 )}
               </td>
-              <td>
+              <td data-label="Projects">
                 <span className="assign-chips">
                   {m.orgRole === 'admin' ? (
                     <span className="muted small">All projects (admin)</span>

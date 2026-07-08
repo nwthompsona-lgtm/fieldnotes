@@ -1495,6 +1495,13 @@ audio {
 .deliv-status.revoked {
   color: var(--danger);
 }
+/* gap matches .deliv-row's 12px so desktop spacing is unchanged by the wrapper. */
+.deliv-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex: none;
+}
 
 /* ── Settings ─────────────────────────────────────────────────────────────── */
 
@@ -1519,6 +1526,18 @@ audio {
 }
 .settings-row:last-child {
   border-bottom: none;
+}
+/* Row anatomy for list rows that stack on phones: the label block + the controls. */
+.settings-main {
+  flex: 1;
+  min-width: 0;
+}
+/* gap matches .settings-row's 12px so desktop spacing is unchanged by the wrapper. */
+.settings-controls {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex: none;
 }
 .inline-form {
   display: flex;
@@ -1596,6 +1615,256 @@ select.input {
     max-height: 94vh;
     border-radius: var(--radius-lg) var(--radius-lg) 0 0;
     border-bottom: none;
+  }
+}
+
+/* ── Responsive (phones — the Phase 13b mobile pass) ──────────────────────────
+   The management surfaces below 640px: capture-standard touch targets (≥44px),
+   the switcher/user menus as full-width sheets under the top bar, modals as
+   safe-area-padded bottom sheets, delivery rows and the members table as
+   cards, and settings rows stacked. Token-driven — both themes for free. */
+
+@media (max-width: 640px) {
+  /* Selectors whose class names ALSO exist inside the .cap capture subtree
+     (h1/.card/.btn/.icon-btn/.input/textarea) carry :where(:not(.cap *)) —
+     zero extra specificity, but the rule stays out of /capture, which this
+     pass must not touch. */
+  h1:where(:not(.cap *)) {
+    font-size: 23px;
+  }
+  .page {
+    padding: 18px 12px 72px;
+  }
+  .card:where(:not(.cap *)) {
+    padding: 16px 14px;
+  }
+
+  /* Touch targets (capture standard: ≥44px). btn-sm keeps its type size but
+     grows into the same thumb-friendly height. */
+  .btn:where(:not(.cap *)) {
+    min-height: 44px;
+  }
+  .btn-sm:where(:not(.cap *)) {
+    padding: 8px 15px;
+  }
+  .tab {
+    min-height: 44px;
+    padding: 8px 16px;
+  }
+  .icon-btn:where(:not(.cap *)),
+  .theme-toggle {
+    width: 44px;
+    height: 44px;
+  }
+  .avatar-btn {
+    /* 32px avatar, 44px hit area — padding grows the target, margin keeps layout. */
+    padding: 6px;
+    margin: -6px;
+  }
+  .menu-item {
+    padding: 13px 12px;
+  }
+  .switcher-btn {
+    min-height: 44px;
+  }
+  .input:where(:not(.cap *)),
+  textarea:where(:not(.cap *)),
+  input[type='text']:where(:not(.cap *)) {
+    min-height: 44px;
+  }
+  .checkbox {
+    width: 20px;
+    height: 20px;
+  }
+
+  /* Switcher + user menus: full-width sheets anchored under the top bar (an
+     absolutely positioned 240px panel would overflow a 375px viewport). The
+     bar also tightens its padding/gaps — five fixed 44px controls otherwise
+     starve the two switcher labels. */
+  .topbar-inner {
+    position: relative;
+    padding: 10px 8px;
+    gap: 6px;
+  }
+  .switcher {
+    position: static;
+  }
+  .menu,
+  .menu-right {
+    left: 10px;
+    right: 10px;
+    min-width: 0;
+    max-height: min(60vh, 480px);
+    overflow-y: auto;
+  }
+
+  /* Review: the sticky finalize bar becomes a thumb bar — save indicator on its
+     own line, action buttons two-up, safe-area padded. The inline Reviewed badge
+     is dropped (the page header already shows it). */
+  .finalize-bar {
+    padding: 12px 14px calc(12px + env(safe-area-inset-bottom));
+    gap: 10px;
+  }
+  .finalize-bar .save-indicator,
+  .finalize-bar > .muted {
+    flex-basis: 100%;
+  }
+  .finalize-bar .spacer {
+    display: none;
+  }
+  .finalize-bar .badge {
+    display: none;
+  }
+  .finalize-bar .btn {
+    flex: 1 1 calc(50% - 10px);
+  }
+
+  /* Review: Trade/Area fields may wrap under each other when cramped. */
+  .inline-fields {
+    flex-wrap: wrap;
+  }
+  .inline-fields .grow {
+    min-width: 140px;
+  }
+
+  /* Modals (Send, Settings dialogs): bottom sheets with reachable actions —
+     footer buttons share the row full-width, counts get their own line. */
+  .modal {
+    padding: 18px 16px calc(18px + env(safe-area-inset-bottom));
+    max-height: 94dvh;
+  }
+  .modal-head h2 {
+    font-size: 18px;
+  }
+  .modal-foot {
+    flex-wrap: wrap;
+    gap: 10px;
+  }
+  .modal-foot .muted {
+    flex: 1 1 100%;
+  }
+  .modal-foot .spacer {
+    display: none;
+  }
+  .modal-foot .btn {
+    flex: 1 1 auto;
+  }
+
+  /* Send modal roster: company heads wrap (long names break instead of
+     forcing overflow); contact rows reach 44px. */
+  .sel-org-head {
+    flex-wrap: wrap;
+    row-gap: 4px;
+    padding: 12px 14px;
+  }
+  .sel-org-name {
+    overflow-wrap: anywhere;
+  }
+  .sel-contact {
+    padding: 11px 14px 11px 38px;
+  }
+
+  /* Reports list: the author/observations meta line wraps instead of
+     squeezing at phone widths. */
+  .rail-meta {
+    flex-wrap: wrap;
+    gap: 4px 7px;
+  }
+
+  /* Delivery: each recipient row becomes an avatar-led card — status and
+     actions align under the name, buttons split the width at thumb size. */
+  .deliv-row {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 6px 12px;
+    align-items: start;
+  }
+  .deliv-row > .avatar {
+    grid-row: span 2;
+    margin-top: 2px;
+  }
+  .deliv-row .schip,
+  .deliv-status {
+    grid-column: 2;
+    justify-self: start;
+  }
+  .deliv-name,
+  .deliv-org {
+    overflow-wrap: anywhere; /* long org · email combos break inside the card */
+  }
+  .deliv-actions {
+    grid-column: 2;
+    width: 100%;
+    gap: 8px;
+  }
+  .deliv-actions .btn {
+    flex: 1;
+  }
+  /* Per-send header: progress bar takes its own full line, resend goes below. */
+  .deliv-head .prog {
+    flex: 1 1 100%;
+    order: 2;
+  }
+  .deliv-head .btn {
+    order: 3;
+    flex: 1;
+  }
+
+  /* Settings rows stack: label block full-width, controls right-aligned below. */
+  .settings-row {
+    flex-wrap: wrap;
+  }
+  .settings-main {
+    flex-basis: 100%;
+  }
+  .settings-controls {
+    width: 100%;
+    justify-content: flex-end;
+  }
+
+  /* Members: the roster table collapses to cards (.table-cards opts in; the
+     operator /admin table keeps its .table-scroll sideways scroll instead). */
+  .table-cards {
+    overflow-x: visible;
+  }
+  .table-cards .report-table {
+    display: block;
+    min-width: 0;
+    background: none;
+    border: none;
+  }
+  .table-cards thead {
+    display: none;
+  }
+  .table-cards tbody {
+    display: grid;
+    gap: 12px;
+  }
+  .table-cards tr {
+    display: block;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow);
+    padding: 12px 14px;
+  }
+  .table-cards tbody tr:hover {
+    background: var(--surface);
+  }
+  .table-cards td {
+    display: block;
+    padding: 6px 0;
+    border-bottom: none;
+  }
+  .table-cards td[data-label]::before {
+    content: attr(data-label);
+    display: block;
+    font-size: 11px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--muted);
+    margin-bottom: 3px;
   }
 }
 
