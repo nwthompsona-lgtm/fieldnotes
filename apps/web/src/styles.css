@@ -1598,3 +1598,12 @@ select.input {
     border-bottom: none;
   }
 }
+
+/* ---- /capture wrapper (Phase 13a) ---------------------------------------
+   capture.css is rewritten under `.cap` at build time (postcss.config.cjs):
+   its :root/html/body rules become `.cap` rules, so the wrapper carries the
+   capture tokens, font and page background for its subtree only. Give it the
+   viewport so height-based screens inside behave like the standalone app. */
+.cap {
+  min-height: 100dvh;
+}

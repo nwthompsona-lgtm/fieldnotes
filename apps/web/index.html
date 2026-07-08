@@ -2,15 +2,25 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>FieldReport — Review &amp; Admin</title>
+    <!-- viewport-fit=cover + no user scaling: the installed capture flow needs edge-to-edge
+         safe-area layout and no iOS input auto-zoom (inputs are 16px+ everywhere). -->
     <meta
-      name="description"
-      content="Review and finalize AI-drafted field reports; inspect raw-vs-polished quality."
+      name="viewport"
+      content="width=device-width, initial-scale=1.0, viewport-fit=cover, maximum-scale=1.0, user-scalable=no"
     />
+    <title>FieldReport</title>
+    <meta name="description" content="Walk the site. We write the report." />
+
+    <!-- PWA / iOS home-screen install (the installed icon opens /capture; management
+         routes live on the same origin). -->
     <!-- Updated at runtime by lib/theme.ts to follow the Daylight/Nightshift toggle. -->
-    <meta name="theme-color" content="#EEF1F5" />
-    <link rel="icon" href="data:," />
+    <meta name="theme-color" content="#EEF2F7" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="FieldReport" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+    <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32.png" />
   </head>
   <body>
     <div id="root"></div>

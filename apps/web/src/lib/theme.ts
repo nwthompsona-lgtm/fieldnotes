@@ -26,7 +26,8 @@ export function applyTheme(theme: Theme): void {
   if (typeof document === 'undefined') return;
   document.documentElement.setAttribute('data-theme', theme);
   const meta = document.querySelector('meta[name="theme-color"]');
-  if (meta) meta.setAttribute('content', theme === 'dark' ? '#0B0E13' : '#EEF1F5');
+  // Flux page-background values (kept in sync with capture's tokens — one app now).
+  if (meta) meta.setAttribute('content', theme === 'dark' ? '#0D1017' : '#EEF2F7');
 }
 
 export function setTheme(theme: Theme): void {

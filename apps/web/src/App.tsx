@@ -16,6 +16,19 @@ import { StakeholdersPage } from './pages/settings/StakeholdersPage';
 import { ReviewPage } from './pages/ReviewPage';
 import { AdminListPage } from './pages/AdminListPage';
 import { AdminDetailPage } from './pages/AdminDetailPage';
+import { CaptureApp } from './capture/CaptureApp';
+
+/** The capture flow (Phase 13a): full-screen mobile surface OUTSIDE the app shell —
+ *  it carries its own install gate → login → project picker, works fully offline, and
+ *  shares the session store, so finishing a walk hands off to /review with no second
+ *  login. The `.cap` wrapper scopes capture.css (see postcss.config.cjs). */
+function CaptureRoute() {
+  return (
+    <div className="cap">
+      <CaptureApp />
+    </div>
+  );
+}
 
 /** Everything behind login lives inside the workspace-aware app shell. */
 function Shell() {
@@ -51,6 +64,10 @@ export function App() {
         />
         {/* Accept works logged-in or out (an existing user can gain a membership). */}
         <Route path="/accept" element={<AcceptInvitePage />} />
+
+        {/* The capture flow — no RequireAuth wrapper: it gates itself (offline-first,
+            cached-account boot; only a real 401 drops it to its login screen). */}
+        <Route path="/capture" element={<CaptureRoute />} />
 
         {/* The app (auth + workspace + shell) */}
         <Route element={<Shell />}>
