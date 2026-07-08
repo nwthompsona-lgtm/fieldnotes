@@ -17,14 +17,21 @@ services:
     healthCheckPath: /healthz
     autoDeploy: true
     envVars:
+      # Values below match the LIVE prod dashboard (checked 2026-07 via /healthz):
+      # sonnet-4-6 for cost/latency (D12), nova-3 for keyterm biasing.
       - key: ANTHROPIC_API_KEY
         sync: false
       - key: ANTHROPIC_MODEL
-        value: claude-opus-4-8
+        value: claude-sonnet-4-6
       - key: DEEPGRAM_API_KEY
         sync: false
       - key: DEEPGRAM_MODEL
-        value: nova-2
+        value: nova-3
+      # LangSmith tracing is ON in prod (MONITORING.md) — set at the dashboard.
+      - key: LANGSMITH_TRACING
+        value: "true"
+      - key: LANGSMITH_API_KEY
+        sync: false
       - key: DATABASE_URL
         sync: false
       - key: S3_BUCKET
