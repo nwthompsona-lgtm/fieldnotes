@@ -92,8 +92,10 @@ export function registerInvitationRoutes(app: FastifyInstance, deps: ServerDeps)
       const rendered = inviteEmail({
         orgName: org?.name ?? 'your organization',
         inviterName: req.auth!.user.name ?? 'An admin',
+        inviterEmail: req.auth!.user.email,
         acceptUrl: inviteUrl,
         orgRole: parsed.data.orgRole,
+        expiresInDays: INVITE_TTL_DAYS,
       });
       await sendBestEffort(
         deps.email,
