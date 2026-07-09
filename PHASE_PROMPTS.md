@@ -165,3 +165,45 @@ Scope: make the management half of the unified app work properly on a phone — 
 
 Rules: work on develop only; match the Flux design system; don't change behavior, only responsive presentation. Verify every listed surface at 375x812 + desktop in the preview workflow. When done: update §14.4 to ✅; commit to develop; report what changed. (Prereq: 13a done.)
 ```
+
+### Phase 14 — Pilot feedback quick wins (14a–14f)
+
+```text
+Read AUTH_MULTITENANCY_PLAN.md §18 (Phases 14-16 — pilot feedback) and the §14.4 entries for 13a/13b. Then execute Phase 14, one commit per sub-phase, in order 14a → 14f.
+
+14a Email visibility + fix: SendModal confirmation surfaces recipients[].emailError from the send 201 ("Sent to N — M emails failed" + provider message + Delivery link); Delivery panel shows the failure reason inline/tappable (not title-hover); resend endpoint returns {ok:false,error} on failure; EMAIL_FROM strict parse at boot (warn dev / fail prod); /healthz += emailFrom domain + emailDomainVerified (Resend domains API, cached, 'unknown' on failure) + db: postgres|pglite + a boot guard refusing Render-without-DATABASE_URL. Then read the recorded rejection for the user's failed send and fix the share-vs-invite delta it names (candidates: fromWithDisplayName rewrite email/types.ts:31 + resend.ts:19, share replyTo send.ts:82-83). Unit matrix: EMAIL_FROM forms (bare / "Name <addr>" / whitespace) × invite/share paths.
+
+14b Stakeholders: on send, persist ad-hoc recipients as directory contacts (dedupe lower(email) per org; directory wins over typed dupes) under a found-or-created "Added from sends" org (kind 'other'), auto-attach involved companies to the project roster (onConflictDoNothing), stamp contactId on recipient rows. New GET /api/projects/:projectId/stakeholder-suggestions?q= (requireSendCapable, min 2 chars, capped). SendModal: typeahead on "+ Add person"; restore def.adHoc in the prefill; fix the empty-state copy (stop pointing at Settings → Stakeholders). Tests: dedupe/attach repo, endpoint authz (pm/super yes, viewer no, cross-org 404).
+
+14c Topbar: replace the two switcher pills + sep-dot with ONE combined context pill (project name 13.5px/700 primary line, org name 11px muted below; one Dropdown menu with Organizations + Projects sections); theme toggle moves into the avatar menu. Bar = pin · context pill · camera · avatar. Verify ≥180px label at 375px.
+
+14d PDF: capture ReportScreen becomes "Share PDF" — fetch bytes → File("<Project> – <YYYY-MM-DD>.pdf", sanitized) → navigator.share({files}) behind canShare; fallback named <a download> / open tab. Server: Content-Disposition "<Project> – <date>.pdf" (+ RFC 5987 filename*) on /r/:id.pdf and /s/:token.pdf; download attr on the recipient shell PDF anchor. Web ReviewPage: downloadAuthedArtifact(url, filename). Do NOT mirror into legacy apps/capture (15c retires it).
+
+14e Watson: gate seedPilot (skip org/project upserts unless PILOT_* env set); name upserts become create-if-missing (stop the boot clobber); neutral config.ts fallbacks; empty Watson nouns from PILOT_GLOSSARY; scrub render.yaml, render.dev.yaml, .env examples, SignupPage placeholder; update seed-pilot tests. ORDERING: user sets real PILOT_ORG_NAME/PILOT_PROJECT_NAME on the dev dashboard and boots once BEFORE the declobber deploys (in-place rename keeps PH11 + reports). Ask for the names if not provided.
+
+14f Hygiene: delete the persistence-probe account/org (persistence-probe-20260709@fieldreport.test) from the dev DB.
+
+Rules: develop only; server tests + all builds green per commit; verify email/stakeholder/PDF flows live against the dev deployment (preview workflow for UI at 375x812 + desktop, both themes). Update §14.4 and §18 status; report what changed and what the recorded email rejection actually said.
+```
+
+### Phase 15 — Seamless one-app (15a–15d)
+
+```text
+Read AUTH_MULTITENANCY_PLAN.md §18 (Phase 15) and §17. Then execute Phase 15, one commit per sub-phase.
+
+15a Workspace boot caching: cache the /me + projects result keyed to the session so entering the Shell from /capture renders instantly from cache and refreshes in the background — no full-page "Opening your workspace…" spinner on capture→management transitions; never hard-block on a network blip (adopt capture's cached-account tolerance).
+
+15b Exit nav from capture: "View reports" affordance in the capture Home header (and ReportScreen header) navigating to the reports list; the /capture install gate gets an escape link back into the app (the gate itself stays — creation remains installed-mobile-only).
+
+15c Legacy retirement: final apps/capture deploy = a "Move to the new app" screen linking to the web origin /capture (note: advise re-installing when no walks are pending sync — old-origin IndexedDB doesn't transfer); then capture-dev becomes a redirect, CORS shrinks to one origin per env, apps/capture leaves the workspace build.
+
+15d Shared <TopBar>: props-only glassy bar component with uniquely-prefixed global classes (renders identically inside .cap), adopted by AppShell AND the five capture screens — one brand mark, one bottom border, 44px controls, back/title/subtitle slots. Both themes, 375px + desktop verification of every header.
+
+Rules: develop only; capture must keep working fully offline (TopBar consumes props, never WorkspaceProvider directly from capture screens); verify the capture↔management transition is spinner-free in the preview workflow. Update §14.4/§18; report what changed. (Prereq: Phase 14 done.)
+```
+
+### Phase 16 — Bottom-tab shell (scope after 14/15 re-test)
+
+```text
+Read AUTH_MULTITENANCY_PLAN.md §18 (Phase 16), §17, and the §14.4 entries for 14/15. Scope and propose the mobile bottom-tab shell (Capture | Reports | Settings) with capture as a tab: WorkspaceProvider offline-tolerance, routing/layout changes, PWA implications, and a verification plan — then WAIT for approval before building. Incorporate any new pilot feedback recorded since Phase 15.
+```

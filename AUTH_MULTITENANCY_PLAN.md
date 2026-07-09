@@ -682,4 +682,121 @@ a second login, and a lossy `?send=1` hand-off — that friction is the bug.
   redirect shell until the pilot's home-screen icons are re-pointed (installed
   PWAs keep their origin — users must re-install from the new origin once).
 
-Status: ✅ 13a done · ✅ 13b done (see §14.4). Remaining: post-pilot-reinstall cleanup (retire apps/capture deploy, redirect capture-dev, shrink CORS).
+Status: ✅ 13a done · ✅ 13b done (see §14.4). Remaining: post-pilot-reinstall cleanup (retire apps/capture deploy, redirect capture-dev, shrink CORS) — folded into §18 Phase 15c.
+
+## 18. Phases 14–16 — Pilot feedback round 1 (user field test 2026-07-08, plan drafted 2026-07-09)
+
+Eight feedback items investigated (7-agent workflow + 2 live probes + screenshots).
+Findings on record: dev DB is PERSISTENT (marker account survived a redeploy — the
+"reports disappear" report closed as legacy-app local-state confusion, user confirmed
+data intact); the failed share email's provider rejection IS recorded per-recipient
+(`email_error`, screenshot shows the chip) but is hover-only — unreadable on mobile;
+invitation emails DELIVER while share emails FAIL from the same verified EMAIL_FROM —
+the only code deltas are the share path's display-name rewrite
+(`fromWithDisplayName`, email/types.ts:31 / resend.ts:19) and its `replyTo`; the
+user tested from the LEGACY installed PWA (screenshot shows the iOS in-app browser
+sheet = window.open cross-origin hand-off); stakeholders confusion = two-tier
+directory/roster model + Send-modal empty-state copy pointing at the wrong screen +
+prefill dropping remembered `def.adHoc`; topbar unreadable at 375px = five fixed
+controls starving two switcher labels (~43px each); PDF share = anonymous `blob:`
+tab, "Unknown.pdf", dead link (screenshot), no `navigator.share` anywhere, server
+Content-Disposition uses the report UUID; Watson = config.ts fallbacks + boot seed
+re-clobbering org/project names EVERY boot + render*.yaml values + pilot glossary +
+SignupPage placeholder ("Watson Builders (dev)" on dev is the dashboard env value).
+
+Decisions approved by the user (2026-07-09): combined org/project switcher pill with
+theme toggle moving into the avatar menu; camera button stays in the bar; PDF button
+opens the native share sheet directly; Watson eliminated from all defaults.
+
+### Phase 14 — Quick wins (each sub-phase = one commit, independently verifiable)
+
+**14a Email: make failures visible, then fix the share-path delta.**
+- SendModal post-send confirmation reads `recipients[].emailError` from the 201:
+  "Sent to N — M emails failed" + the provider message + link to Delivery (today a
+  100%-failed send shows pure success).
+- Delivery panel: email-failed reason inline/tappable (currently `title` hover-only —
+  dead on touch). Resend endpoint returns the real outcome (`{ok:false,error}`)
+  instead of unconditional ok, so DeliveryPage can toast it.
+- Boot/config: strict EMAIL_FROM format parse (warn on dev, fail on prod); /healthz
+  gains `emailFrom` domain + `emailDomainVerified` via Resend's domains API (cached,
+  'unknown' on API failure) and `db: postgres|pglite` + a Render-without-DATABASE_URL
+  boot guard (item-1 insurance, same commit family).
+- Root-cause fix: read the recorded rejection (visible after the chip fix, or via
+  one Resend click), then fix the delta it names — candidates are the
+  `fromWithDisplayName` rewrite (only applied on shares) and share `replyTo`; add a
+  unit matrix for EMAIL_FROM forms (bare / display-name / whitespace) × invite/share.
+- Tests: from-construction units; emailError surfacing integration.
+
+**14b Stakeholders: save-once, suggest-forever.**
+- Server, on send: persist ad-hoc recipients as directory contacts (dedupe by
+  normalized email per org; contacts win over typed duplicates — the rule send.ts
+  already applies), under a found-or-created per-org "Added from sends" org (kind
+  'other'; no schema migration), auto-attach involved companies to the project
+  roster (`onConflictDoNothing`), stamp `contactId` on minted recipient rows.
+- New send-capable endpoint `GET /api/projects/:projectId/stakeholder-suggestions?q=`
+  (min 2 chars, capped, org-scoped; requireSendCapable — the org directory read
+  stays admin-only).
+- SendModal: typeahead on "+ Add person" from that endpoint; restore `def.adHoc` in
+  the prefill (bug — server remembers it, client drops it); empty-state copy stops
+  pointing at Settings → Stakeholders and says added people are saved to the project.
+- Tests: repo dedupe/attach; endpoint authz (pm/super yes, viewer no, cross-org 404).
+
+**14c Topbar: combined context pill (management bar; commit A of unification).**
+- One switcher pill: project name 13.5px/700 primary line, org name 11px muted below;
+  one menu with Organizations + Projects sections (reuse Dropdown). Theme toggle
+  becomes an avatar-menu item. Bar = pin · context pill · camera · avatar →
+  ~187px label at 375px (vs ~43px today). Drop sep-dot + two-pill flex rules.
+
+**14d PDF: share the file, name the file.**
+- Capture ReportScreen → "Share PDF": fetch bytes → `File` named
+  "<Project> – <YYYY-MM-DD>.pdf" (sanitized) → `navigator.share({files})` behind
+  `canShare` detect; fallback = named `<a download>` (desktop) / open tab.
+- Server: Content-Disposition filename "<Project> – <date>.pdf" (+ RFC 5987
+  filename*) on /r/:id.pdf and /s/:token.pdf; `download` attr on the recipient
+  shell's PDF anchor. Web ReviewPage gets `downloadAuthedArtifact(url, filename)`.
+- Legacy apps/capture NOT mirrored — 15c retires it instead.
+
+**14e Watson eradication.**
+- Gate `seedPilot`: skip org/project upserts unless the PILOT_* env is explicitly
+  set; change name upserts to create-if-missing (stop the every-boot clobber so
+  renames stick). Neutral fallbacks in config.ts ('My Organization'/'Pilot Project');
+  empty the Watson nouns from PILOT_GLOSSARY; scrub render.yaml:50,
+  render.dev.yaml:75/77, both .env examples, SignupPage placeholder; update
+  seed-pilot tests.
+- ORDERING: the user renames via dashboard env (PILOT_ORG_NAME/PILOT_PROJECT_NAME →
+  real names, needs their chosen names at execution) and boots ONCE under current
+  clobber semantics so org_pilot_dev/pilot-project rename in place keeping PH11 +
+  reports; THEN the declobber deploys.
+
+**14f Dev hygiene.** Delete the persistence-probe account/org from the dev DB
+(created 2026-07-09 for the item-1 test: persistence-probe-20260709@fieldreport.test).
+
+### Phase 15 — Seamless one-app (structural)
+
+- **15a** Workspace boot caching: cache/hoist the /me + projects fetch (session-store
+  keyed) so entering Shell from /capture is spinner-free; adopt capture's tolerant
+  cached-account boot (never hard-block on a network blip).
+- **15b** Exit nav from capture: "View reports" affordance in capture Home header
+  (+ ReportScreen header); install-gate gets an escape link back to the app (gate
+  itself stays — capture creation remains installed-mobile-only by design).
+- **15c** Legacy retirement: final apps/capture build = "Move to the new app" screen
+  linking to the web origin's /capture; user re-installs (walk data note: time it
+  when no walks are pending sync); then capture-dev becomes a redirect, CORS shrinks
+  to one origin per env, apps/capture leaves the build.
+- **15d** Shared <TopBar> primitive (commit B): props-only glassy bar (own uniquely
+  prefixed classes so it renders identically inside `.cap`), adopted by the five
+  capture screens — one brand mark, one border, 44px controls, back/title slots.
+  Kills the 7-implementations drift behind #5.
+
+### Phase 16 — Bottom-tab shell (the full "one seamless SaaS app")
+
+Mobile bottom tab bar (Capture | Reports | Settings) with capture as a tab; inner
+capture screens (camera, sync) stay full-screen. Prereq: WorkspaceProvider
+offline-tolerant (15a groundwork). Scope it AFTER 14/15 land and the pilot re-tests —
+it rebuilds navigation and should absorb that feedback.
+
+Execution-time inputs still needed from the user: the real org + project names for
+14e's dashboard rename; and (fast path for 14a) the email-failed chip's hover text
+read from a desktop browser, else the chip fix surfaces it on mobile first.
+
+Status: ⬜ plan approved pending user go · nothing built.
