@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
-import { Icon, Logo } from './Icon';
+import { Icon } from './Icon';
+import { TopBar } from './TopBar';
 import { RunningList } from './RunningList';
 import { formatBytes, formatRelativeAt } from '../lib/format';
 import { getSubmittedReports, type SubmittedReport } from '../lib/reports';
@@ -48,27 +49,9 @@ export function HomeScreen({
 }: Props) {
   return (
     <div className="screen">
-      <div className="sticky-header">
-        <div className="header-row" style={{ justifyContent: 'space-between' }}>
-          <div className="header-row" style={{ gap: 9 }}>
-            <span
-              style={{
-                display: 'flex',
-                width: 30,
-                height: 30,
-                borderRadius: 9,
-                background: 'var(--primary-soft)',
-                alignItems: 'center',
-                justifyContent: 'center',
-              }}
-            >
-              <Logo size={18} fill="var(--primary)" ink="var(--primary-ink)" />
-            </span>
-            <span className="display" style={{ fontWeight: 700, fontSize: 19 }}>
-              FieldReport
-            </span>
-          </div>
-          <div className="header-row" style={{ gap: 8 }}>
+      <TopBar
+        right={
+          <>
             {/* Out to the management surface (15b) — same app, plain navigation. */}
             <button className="icon-btn" onClick={onViewReports} aria-label="View reports">
               <Icon name="doc" size={18} />
@@ -84,8 +67,9 @@ export function HomeScreen({
               <span className={`status-dot ${online ? 'online' : 'offline'}`} />
               {online ? 'Online' : 'Offline'}
             </span>
-          </div>
-        </div>
+          </>
+        }
+      >
         {/* The picked project this walk captures into (F3) — tap to switch. */}
         <button
           className="status-pill"
@@ -103,7 +87,7 @@ export function HomeScreen({
             <Icon name="chevronRight" size={13} strokeWidth={2.4} />
           </span>
         </button>
-      </div>
+      </TopBar>
 
       <div className="screen-body">
         {/* This-walk stat card */}

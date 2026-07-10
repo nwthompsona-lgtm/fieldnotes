@@ -111,6 +111,55 @@ button {
   background: var(--bg);
   padding: var(--safe-top) 18px 12px;
 }
+/* ── The one capture top bar (15d) — glassy like the management shell ──────── */
+.capbar {
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  background: color-mix(in srgb, var(--bg) 78%, transparent);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  border-bottom: 1px solid var(--line);
+  padding: var(--safe-top) 18px 12px;
+}
+.capbar-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.capbar-brandpin {
+  display: flex;
+  width: 30px;
+  height: 30px;
+  border-radius: 9px;
+  background: var(--primary-soft);
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+}
+.capbar-word {
+  font-weight: 700;
+  font-size: 19px;
+}
+.capbar-titles {
+  flex: 1;
+  min-width: 0;
+}
+.capbar-title {
+  font-weight: 700;
+  font-size: 18px;
+}
+.capbar-sub {
+  font-size: 12.5px;
+  color: var(--muted);
+}
+.capbar-right {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 0 0 auto;
+}
 .screen-body {
   flex: 1;
   padding: 8px 18px 20px;

@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Icon } from './Icon';
+import { TopBar } from './TopBar';
 import { PhotoThumb } from './PhotoThumb';
 import { db } from '../db';
 import { getObservationsForWalk, getWalk, setWalkDetails } from '../repo';
@@ -194,16 +195,7 @@ export function ReviewScreen({ pendingWalkId, online, onBack, onOpenReport, onNe
 
   return (
     <div className="screen">
-      <div className="sticky-header">
-        <div className="header-row">
-          <button className="icon-btn" onClick={onBack} aria-label="Back">
-            <Icon name="chevronLeft" size={18} strokeWidth={2.1} />
-          </button>
-          <div className="display" style={{ fontWeight: 700, fontSize: 18 }}>
-            Review &amp; sync
-          </div>
-        </div>
-      </div>
+      <TopBar onBack={onBack} title="Review & sync" />
 
       <div className="screen-body">
         {/* Summary */}

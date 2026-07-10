@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Icon } from './Icon';
+import { TopBar } from './TopBar';
 import { me, listProjects, logout, ApiError } from '../lib/authApi';
 import { getAccount, setAccount } from '../lib/session';
 import {
@@ -121,12 +122,8 @@ export function ProjectPickerScreen({ online, onPicked, onBack }: Props) {
 
   return (
     <div className="screen">
-      <div style={{ padding: 'var(--safe-top) 22px 12px' }}>
-        {onBack && (
-          <button className="icon-btn" onClick={onBack} aria-label="Back" style={{ marginBottom: 14 }}>
-            <Icon name="chevronLeft" size={18} strokeWidth={2.1} />
-          </button>
-        )}
+      <TopBar onBack={onBack} />
+      <div style={{ padding: '16px 22px 12px' }}>
         <div className="display" style={{ fontWeight: 700, fontSize: 26, letterSpacing: '-.01em' }}>
           Choose a project
         </div>

@@ -13,6 +13,7 @@ import {
 } from '../repo';
 import { PhotoThumb } from './PhotoThumb';
 import { Icon } from './Icon';
+import { TopBar } from './TopBar';
 import { fmtClock } from '../lib/format';
 
 interface Props {
@@ -230,20 +231,13 @@ export function CaptureFlow({ walkId, onSaved, onCancel }: Props) {
 
   return (
     <div className="screen">
-      <div className="sticky-header">
-        <div className="header-row">
-          <button className="icon-btn" onClick={handleCancel} aria-label="Cancel">
-            <Icon name="x" size={18} strokeWidth={2} />
-          </button>
-          <div style={{ flex: 1 }}>
-            <div className="display" style={{ fontWeight: 700, fontSize: 18 }}>
-              New observation
-            </div>
-            <div className="muted" style={{ fontSize: 12.5 }}>
-              Photos, then one voice note
-            </div>
-          </div>
-        </div>
+      <TopBar
+        onBack={handleCancel}
+        backLabel="Cancel"
+        backIcon="x"
+        title="New observation"
+        subtitle="Photos, then one voice note"
+      >
         <div style={{ display: 'flex', gap: 8, marginTop: 15 }}>
           <div style={{ flex: 1, height: 5, borderRadius: 999, background: 'var(--primary)' }} />
           <div
@@ -256,7 +250,7 @@ export function CaptureFlow({ walkId, onSaved, onCancel }: Props) {
             }}
           />
         </div>
-      </div>
+      </TopBar>
 
       <input
         ref={fileInputRef}

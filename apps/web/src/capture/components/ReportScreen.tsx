@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Icon } from './Icon';
+import { TopBar } from './TopBar';
 import { fetchPdfBlob, finalizeReport, getReport, patchReport } from '../lib/api';
 import { reportPdfFileName } from '../../api';
 import { reviewUrl } from '../config';
@@ -397,30 +398,24 @@ function Header({
 }) {
   const subtitle = status === 'reviewed' ? 'Reviewed · ready to share' : 'Draft · review before sending';
   return (
-    <div className="sticky-header" style={{ borderBottom: '1px solid var(--line)' }}>
-      <div className="header-row">
-        <button className="icon-btn" onClick={onBack} aria-label="Back">
-          <Icon name="chevronLeft" size={18} strokeWidth={2.1} />
-        </button>
-        <div style={{ flex: 1 }}>
-          <div className="display" style={{ fontWeight: 700, fontSize: 18 }}>
-            Site report
-          </div>
-          <div className="muted" style={{ fontSize: 12.5 }}>
-            {subtitle}
-          </div>
-        </div>
-        {onViewInApp && (
-          <button className="icon-btn" onClick={onViewInApp} aria-label="View in reports">
-            <Icon name="doc" size={17} />
-          </button>
-        )}
-        <span className="chip chip-primary" style={{ padding: '6px 11px' }}>
-          <Icon name="sparkle" size={13} />
-          AI draft
-        </span>
-      </div>
-    </div>
+    <TopBar
+      onBack={onBack}
+      title="Site report"
+      subtitle={subtitle}
+      right={
+        <>
+          {onViewInApp && (
+            <button className="icon-btn" onClick={onViewInApp} aria-label="View in reports">
+              <Icon name="doc" size={17} />
+            </button>
+          )}
+          <span className="chip chip-primary" style={{ padding: '6px 11px' }}>
+            <Icon name="sparkle" size={13} />
+            AI draft
+          </span>
+        </>
+      }
+    />
   );
 }
 
