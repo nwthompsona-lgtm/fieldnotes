@@ -10,12 +10,14 @@ import {
   useCallback,
   useContext,
   useEffect,
+  useRef,
   useState,
   type ReactNode,
 } from 'react';
 import type { Me, OrgRole, ProjectRole } from '@fieldreport/contracts';
 import { me as fetchMe, listProjects, logout, type ProjectWithRole } from './authApi';
 import { LAST_ORG_KEY, lastProjectKey } from './config';
+import { getSessionToken } from './session';
 import { Loading, ErrorState } from './components/ui';
 
 export type WorkspaceOrg = Me['orgs'][number];
@@ -93,16 +95,90 @@ function persist(key: string, value: string): void {
   }
 }
 
+// ── Workspace boot cache (Phase 15a) ─────────────────────────────────────────
+// Entering the shell (from /capture, a reload, a new tab) used to hard-block on
+// /me + projects. Cache the last-known snapshot BOUND TO THE SESSION TOKEN — a
+// different login can never see the previous account's workspace — render from it
+// instantly, and revalidate in the background. A network blip with a cache present
+// degrades to slightly-stale data instead of a spinner or a full-screen error.
+
+const WS_CACHE_KEY = 'fieldreport.workspaceCache.v1';
+
+interface WsCache {
+  /** Tail of the session token that fetched this snapshot (account binding). */
+  tok: string;
+  me: Me;
+  projects: Record<string, ProjectWithRole[]>;
+}
+
+function tokenTail(): string | null {
+  const t = getSessionToken();
+  return t ? t.slice(-16) : null;
+}
+
+function readWsCache(): WsCache | null {
+  try {
+    const raw = localStorage.getItem(WS_CACHE_KEY);
+    if (!raw) return null;
+    const c = JSON.parse(raw) as WsCache;
+    return c && c.tok && c.tok === tokenTail() && c.me ? c : null;
+  } catch {
+    return null;
+  }
+}
+
+function writeWsCache(patch: { me?: Me; projects?: [string, ProjectWithRole[]] }): void {
+  const tok = tokenTail();
+  if (!tok) return;
+  try {
+    const prev = readWsCache();
+    const me = patch.me ?? prev?.me;
+    if (!me) return; // never cache projects without the account they belong to
+    const next: WsCache = { tok, me, projects: { ...(prev?.projects ?? {}) } };
+    if (patch.projects) next.projects[patch.projects[0]] = patch.projects[1];
+    localStorage.setItem(WS_CACHE_KEY, JSON.stringify(next));
+  } catch {
+    /* private mode — boot just stays network-dependent */
+  }
+}
+
+function clearWsCache(): void {
+  try {
+    localStorage.removeItem(WS_CACHE_KEY);
+  } catch {
+    /* ignore */
+  }
+}
+
+/** The org the cached snapshot would open with (last-visited, validated). */
+function cachedOrgId(c: WsCache | null): string | null {
+  if (!c) return null;
+  const last = readLastOrg();
+  return (c.me.orgs.find((o) => o.id === last) ?? c.me.orgs[0])?.id ?? null;
+}
+
 export function WorkspaceProvider({ children }: { children: ReactNode }) {
-  const [meData, setMeData] = useState<Me | null>(null);
+  // Boot from the (token-bound) snapshot when one exists: the shell renders
+  // immediately — no "Opening your workspace…" between /capture and management.
+  const [meData, setMeData] = useState<Me | null>(() => readWsCache()?.me ?? null);
   const [error, setError] = useState<string | null>(null);
-  const [currentOrgId, setCurrentOrgId] = useState<string | null>(null);
-  const [projects, setProjects] = useState<ProjectWithRole[] | null>(null);
+  const [currentOrgId, setCurrentOrgId] = useState<string | null>(() =>
+    cachedOrgId(readWsCache()),
+  );
+  const [projects, setProjects] = useState<ProjectWithRole[] | null>(() => {
+    const c = readWsCache();
+    const orgId = cachedOrgId(c);
+    return (orgId && c?.projects[orgId]) || null;
+  });
   const [reloadKey, setReloadKey] = useState(0);
   const [projectsKey, setProjectsKey] = useState(0);
+  // Whether SOMETHING is on screen (cache or fetched) — a refresh failure then keeps
+  // serving it instead of blanking the app into the full-screen error.
+  const hasWorkspace = useRef(meData !== null);
 
-  // Load /me once per session (or on retry). A 401 inside authed() clears the session,
-  // which unmounts this provider via the RequireAuth guard — no handling needed here.
+  // Load /me once per session (or on retry), revalidating any cached snapshot. A 401
+  // inside authed() clears the session, which unmounts this provider via the
+  // RequireAuth guard — no handling needed here.
   useEffect(() => {
     let alive = true;
     setError(null);
@@ -110,24 +186,49 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       .then((m) => {
         if (!alive) return;
         setMeData(m);
+        hasWorkspace.current = true;
+        writeWsCache({ me: m });
         const last = readLastOrg();
         const valid = m.orgs.find((o) => o.id === last) ?? m.orgs[0];
         setCurrentOrgId(valid?.id ?? null);
       })
-      .catch((e) => alive && setError(e instanceof Error ? e.message : String(e)));
+      .catch((e) => {
+        if (!alive) return;
+        // Tolerant boot (15a): with a snapshot on screen a network blip must not
+        // blank the app — keep serving it. (An expired session is a real 401 and
+        // signs out via authed(), never lands here as a stale-forever workspace.)
+        if (hasWorkspace.current) {
+          console.warn('[workspace] /me refresh failed — serving the cached snapshot', e);
+        } else {
+          setError(e instanceof Error ? e.message : String(e));
+        }
+      });
     return () => {
       alive = false;
     };
   }, [reloadKey]);
 
   // (Re)load the project list whenever the current org changes (or on reloadProjects()).
+  // Cached list first (no flash), then revalidate.
   useEffect(() => {
     if (!currentOrgId) return;
     let alive = true;
-    setProjects(null);
+    const cached = readWsCache()?.projects[currentOrgId] ?? null;
+    setProjects(cached);
     listProjects(currentOrgId)
-      .then((p) => alive && setProjects(p))
-      .catch((e) => alive && setError(e instanceof Error ? e.message : String(e)));
+      .then((p) => {
+        if (!alive) return;
+        setProjects(p);
+        writeWsCache({ projects: [currentOrgId, p] });
+      })
+      .catch((e) => {
+        if (!alive) return;
+        if (cached) {
+          console.warn('[workspace] project refresh failed — serving the cached list', e);
+        } else {
+          setError(e instanceof Error ? e.message : String(e));
+        }
+      });
     return () => {
       alive = false;
     };
@@ -153,7 +254,12 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     return (
       <ErrorState
         message={error}
-        onRetry={() => setReloadKey((k) => k + 1)}
+        // Retry BOTH loads: a projects-fetch failure used to re-run only /me, which
+        // left the project list permanently unfetched (same org id → effect no-op).
+        onRetry={() => {
+          setReloadKey((k) => k + 1);
+          setProjectsKey((k) => k + 1);
+        }}
         hint="Check your connection, then try again."
       />
     );
@@ -183,7 +289,10 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     switchOrg,
     defaultProjectId,
     rememberProject,
-    signOut: logout,
+    signOut: async () => {
+      clearWsCache(); // never leave a workspace snapshot behind on a shared device
+      await logout();
+    },
   };
 
   return <WorkspaceContext.Provider value={ws}>{children}</WorkspaceContext.Provider>;
