@@ -486,6 +486,8 @@ Legend: ⬜ todo · 🟡 in progress · ✅ done (on `develop`) · 🚀 promoted
 
 - ✅ **Phase 14c** — Combined context pill (§18; pilot feedback items 5/6, commit A of topbar unification). The two switcher pills + separate theme toggle collapsed into ONE context pill: project name (13.5px/700) over org name (11px muted), one menu with **Projects** (first — the frequent switch) and **Organizations** sections; the theme toggle became an avatar-menu row (`ThemeMenuItem`, deliberately non-closing so the flip is visible live); the bar is now pin · context pill · camera · avatar. CSS: `.ctx-btn/.ctx-labels/.ctx-project/.ctx-org` (two snug ellipsizing lines, 320px max desktop); `sep-dot` rules and the dead `.swb-label` removed; the one-pill shrink rule (`min-width:0; flex:0 1 auto`) moved to base. Verified live: desktop menus (both sections, checkmarks), theme flip from the avatar menu (label updates in place), 375×812 — zero horizontal overflow, pill 44px tall with the full "Watson Island" label visible (was ~43px of ellipsis), camera + avatar at 44×44, menu renders as the full-width sheet; web build green.
 
+- ✅ **Phase 14d** — Share the PDF as a named FILE (§18; pilot feedback 7 — the blob-URL tab dance made the OS share sheet pass a link or an attachment called "Unknown.pdf"). **One filename everywhere**: `"<Project> – <YYYY-MM-DD>.pdf"` — server `filenames.ts` (`reportPdfFilename` sanitize + `inlinePdfDisposition` = quoted ASCII fallback + RFC 5987 `filename*`) mirrored by web `reportPdfFileName`. **Server**: `/r/:id.pdf` and `/s/:token.pdf` Content-Disposition carry the human name; the recipient shell's Download PDF anchor gains `download="<name>"`. **Capture** (`ReportScreen`): "Export PDF" → **"Share PDF"** — finalize, fetch bytes with the bearer (`fetchPdfBlob` replaces the object-URL machinery), wrap in a named `File`, `navigator.share({files})` behind `canShare` (AbortError = user dismissed; NotAllowedError after a long render falls back), fallback = named `<a download>`. **Web** (`ReviewPage` both variants): Download PDF now uses `downloadAuthedArtifact(url, name)` — a real named download, not a blob tab. Legacy `apps/capture` deliberately NOT mirrored (15c retires it). 159/159 tests (+2 filename/disposition units; /s PDF test now asserts the exact header + shell anchor). Verified live: `/r/:id.pdf` returns `filename="Watson Island - 2026-07-07.pdf"` + UTF-8 `filename*`; preview Download PDF fetches and saves without error.
+
 ### 14.5 Phase playbooks
 
 Each playbook is written to be executed cold. Format: **Goal · Starting state · Read first · Build · Don't break · Verify · Done when.**
@@ -804,6 +806,6 @@ Execution-time inputs still needed from the user: the real org + project names f
 14e's dashboard rename; and (fast path for 14a) the email-failed chip's hover text
 read from a desktop browser, else the chip fix surfaces it on mobile first.
 
-Status: 🟡 in progress — ✅ 14a (`ac5a011`) · ✅ 14b (`7238c6b`) · ✅ 14c · next 14d → 14f, then Phase 15.
+Status: 🟡 in progress — ✅ 14a (`ac5a011`) · ✅ 14b (`7238c6b`) · ✅ 14c (`e910336`) · ✅ 14d · next 14e/14f, then Phase 15.
 User actions still owed: verify a domain at resend.com/domains + set `EMAIL_FROM` on it
 (the actual email unblock); real org/project names for 14e's dashboard rename.

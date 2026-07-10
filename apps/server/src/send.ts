@@ -23,6 +23,7 @@ import { throttle } from './auth/throttle.js';
 import { ensureArtifacts, renderAndStore } from './pipeline.js';
 import { storageKeys } from './storage/types.js';
 import { shareEmail, sendBestEffort } from './email/index.js';
+import { reportPdfFilename, inlinePdfDisposition } from './filenames.js';
 import { escapeHtml } from './html.js';
 import type { ReportAccessMeta } from './auth/authz.js';
 
@@ -378,6 +379,7 @@ export function registerSendRoutes(app: FastifyInstance, deps: ServerDeps): void
     // read-only recipient shell (brand bar + Download PDF + expiry line).
     await repo.recordRecipientOpen(req.params.token);
     const project = meta ? await repo.getProject(meta.projectId) : null;
+    const sharedReport = await repo.getReport(r.reportId);
     const obj = await storage.get(storageKeys.html(r.reportId));
     const html = Buffer.from(obj.bytes).toString('utf8');
     return servePage(
@@ -386,6 +388,9 @@ export function registerSendRoutes(app: FastifyInstance, deps: ServerDeps): void
       injectShareShell(html, {
         projectName: project?.name ?? 'your project',
         pdfHref: `/s/${encodeURIComponent(req.params.token)}.pdf`,
+        pdfName: sharedReport
+          ? reportPdfFilename(sharedReport.projectName ?? project?.name, sharedReport.date)
+          : 'field-report.pdf',
         expiresAt: r.expiresAt,
       }),
     );
@@ -402,9 +407,13 @@ export function registerSendRoutes(app: FastifyInstance, deps: ServerDeps): void
     }
     // No extra open recorded here — the HTML view is the canonical open (§8.4).
     const obj = await storage.get(storageKeys.pdf(r.reportId));
+    const report = await repo.getReport(r.reportId);
+    const filename = report
+      ? reportPdfFilename(report.projectName, report.date)
+      : `field-report-${r.reportId}.pdf`;
     reply
       .type('application/pdf')
-      .header('content-disposition', `inline; filename="field-report-${r.reportId}.pdf"`)
+      .header('content-disposition', inlinePdfDisposition(filename))
       .header('cache-control', 'no-store');
     return reply.send(Buffer.from(obj.bytes));
   });
@@ -426,13 +435,13 @@ const fmtExpiry = (d: Date): string =>
  *  "Daily field report — {project}" + Download PDF pill + shared/read-only/expiry line. */
 function injectShareShell(
   html: string,
-  opts: { projectName: string; pdfHref: string; expiresAt: Date },
+  opts: { projectName: string; pdfHref: string; pdfName: string; expiresAt: Date },
 ): string {
   const shell = `<div style="position:sticky;top:0;z-index:10;background:#ffffff;border-bottom:1px solid #e6ebf2;font-family:${SHARE_FONT};">
 <div style="max-width:760px;margin:0 auto;padding:11px 18px 0;display:flex;align-items:center;gap:11px;flex-wrap:wrap;">
 ${PIN_SVG(20)}
 <div style="flex:1;min-width:140px;font-size:14.5px;color:#10151d;"><b style="font-weight:700;">Daily field report</b> — ${escapeHtml(opts.projectName)}</div>
-<a href="${opts.pdfHref}" style="display:inline-flex;align-items:center;gap:7px;flex:0 0 auto;white-space:nowrap;padding:9px 14px;border-radius:999px;background:#2b54e0;color:#ffffff;font-weight:700;font-size:13.5px;text-decoration:none;box-shadow:0 8px 20px -14px rgba(43,84,224,.26);"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 15V4M8 8l4-4 4 4M5 20h14"/></svg>Download PDF</a>
+<a href="${opts.pdfHref}" download="${escapeHtml(opts.pdfName)}" style="display:inline-flex;align-items:center;gap:7px;flex:0 0 auto;white-space:nowrap;padding:9px 14px;border-radius:999px;background:#2b54e0;color:#ffffff;font-weight:700;font-size:13.5px;text-decoration:none;box-shadow:0 8px 20px -14px rgba(43,84,224,.26);"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 15V4M8 8l4-4 4 4M5 20h14"/></svg>Download PDF</a>
 </div>
 <div style="max-width:760px;margin:0 auto;padding:7px 18px 9px;font-size:12px;color:#667283;display:flex;align-items:center;gap:6px;flex-wrap:wrap;">${LOCK_SVG}Shared with you · read-only · link expires ${escapeHtml(fmtExpiry(opts.expiresAt))}</div>
 </div>`;

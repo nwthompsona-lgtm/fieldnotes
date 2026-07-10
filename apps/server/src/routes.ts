@@ -23,6 +23,7 @@ import { registerInvitationRoutes } from './auth/invitations.js';
 import { registerDirectoryRoutes } from './directory.js';
 import { registerSendRoutes } from './send.js';
 import { registerSettingsRoutes } from './settings.js';
+import { reportPdfFilename, inlinePdfDisposition } from './filenames.js';
 import { bearerToken, requireAuth } from './auth/context.js';
 import type { ReportAccessMeta } from './auth/authz.js';
 
@@ -403,9 +404,15 @@ export function registerRoutes(app: FastifyInstance, deps: ServerDeps): void {
       if (!(await hostedViewGate(req.params.id, req, reply))) return reply;
       if (!(await ensureArtifactsFor(req.params.id))) return reply.code(425).send({ error: 'not ready' });
       const obj = await storage.get(storageKeys.pdf(req.params.id));
+      // 14d: the human filename ("<Project> – <date>.pdf") rides the header, so save-as
+      // and share sheets stop calling it a report-id slug.
+      const report = await repo.getReport(req.params.id);
+      const filename = report
+        ? reportPdfFilename(report.projectName, report.date)
+        : `field-report-${req.params.id}.pdf`;
       reply
         .type('application/pdf')
-        .header('content-disposition', `inline; filename="field-report-${req.params.id}.pdf"`)
+        .header('content-disposition', inlinePdfDisposition(filename))
         .header('cache-control', 'no-cache');
       return reply.send(Buffer.from(obj.bytes));
     },

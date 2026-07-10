@@ -163,13 +163,19 @@ describe('GET /s/:token (external capability URL)', () => {
     expect(after2!.firstOpenedAt).toEqual(after1!.firstOpenedAt);
   }, 30_000); // artifacts are cached from the send, but allow a render if the cache missed
 
-  it('the PDF link streams a PDF and records no extra open', async () => {
+  it('the PDF link streams a PDF with the human filename and records no extra open', async () => {
     const token = tokenFromEmailTo(C2_EMAIL);
-    await app.inject({ method: 'GET', url: `/s/${token}` }); // canonical open
+    const html = await app.inject({ method: 'GET', url: `/s/${token}` }); // canonical open
+    // The shell's Download PDF anchor names the file too (14d).
+    expect(html.body).toContain('download="Send Project – 2026-07-07.pdf"');
     const before = (await deps.repo.getRecipientByToken(token))!.openCount;
     const pdf = await app.inject({ method: 'GET', url: `/s/${token}.pdf` });
     expect(pdf.statusCode).toBe(200);
     expect(pdf.headers['content-type']).toContain('application/pdf');
+    // 14d: "<Project> – <date>.pdf" — ASCII fallback + RFC 5987 filename*.
+    expect(pdf.headers['content-disposition']).toBe(
+      `inline; filename="Send Project - 2026-07-07.pdf"; filename*=UTF-8''Send%20Project%20%E2%80%93%202026-07-07.pdf`,
+    );
     expect(pdf.rawPayload.length).toBeGreaterThan(1000);
     expect((await deps.repo.getRecipientByToken(token))!.openCount).toBe(before);
   });

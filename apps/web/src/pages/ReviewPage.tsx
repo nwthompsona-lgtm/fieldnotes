@@ -3,11 +3,13 @@ import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import type { Report, ReportEdit, ProcessingStatus } from '@fieldreport/contracts';
 import {
   ApiError,
+  downloadAuthedArtifact,
   finalizeReport,
   getReport,
   getReportStatus,
   openAuthedArtifact,
   patchReport,
+  reportPdfFileName,
   type StatusEnvelope,
 } from '../api';
 import { STATUS_POLL_MS } from '../config';
@@ -235,6 +237,14 @@ function ReadyView({ report: initial, reportId }: { report: Report; reportId: st
     openAuthedArtifact(url).catch((err) => setOpenError(messageOf(err)));
   };
 
+  // The PDF downloads as a NAMED file (14d): "<Project> – <date>.pdf", not a blob tab.
+  const downloadPdf = (url: string, r: Report) => {
+    setOpenError(null);
+    downloadAuthedArtifact(url, reportPdfFileName(r.projectName, r.date)).catch((err) =>
+      setOpenError(messageOf(err)),
+    );
+  };
+
   const sortedObs = [...report.observations].sort((a, b) => a.order - b.order);
 
   const save = useCallback(
@@ -423,7 +433,7 @@ function ReadyView({ report: initial, reportId }: { report: Report; reportId: st
               <button
                 type="button"
                 className="btn btn-secondary"
-                onClick={() => report.pdfUrl && openArtifact(report.pdfUrl)}
+                onClick={() => report.pdfUrl && downloadPdf(report.pdfUrl, report)}
               >
                 Download PDF
               </button>
@@ -499,6 +509,13 @@ function ReadOnlyView({ report }: { report: Report }) {
     openAuthedArtifact(url).catch((err) => setOpenError(messageOf(err)));
   };
 
+  const downloadPdf = (url: string) => {
+    setOpenError(null);
+    downloadAuthedArtifact(url, reportPdfFileName(report.projectName, report.date)).catch(
+      (err) => setOpenError(messageOf(err)),
+    );
+  };
+
   return (
     <div className="page page-narrow">
       <div className="row row-between mb-24">
@@ -565,7 +582,7 @@ function ReadOnlyView({ report }: { report: Report }) {
           </button>
         )}
         {reviewed && pdfUrl && (
-          <button type="button" className="btn btn-secondary" onClick={() => openArtifact(pdfUrl)}>
+          <button type="button" className="btn btn-secondary" onClick={() => downloadPdf(pdfUrl)}>
             Download PDF
           </button>
         )}

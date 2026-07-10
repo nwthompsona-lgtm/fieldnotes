@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Icon } from './Icon';
-import { fetchPdfBlobUrl, finalizeReport, getReport, patchReport } from '../lib/api';
+import { fetchPdfBlob, finalizeReport, getReport, patchReport } from '../lib/api';
+import { reportPdfFileName } from '../../api';
 import { reviewUrl } from '../config';
 import { formatLongDate } from '../lib/format';
 import type { Report } from '@fieldreport/contracts';
@@ -89,22 +90,38 @@ export function ReportScreen({ reportId, online, onBack }: Props) {
     return updated;
   }
 
-  // Export = finalize, so the PDF is never a watermarked draft (decision 1.5). The PDF
-  // route is session-gated (§6.6) — a bare tab can't send the bearer, so fetch the bytes
-  // with the header and hand the tab an object URL.
-  async function exportPdf() {
+  // Share the PDF as a real named FILE (14d — pilot feedback 7: the blob-URL tab dance
+  // made the OS share sheet pass a link, or an attachment called "Unknown.pdf"). Export
+  // still finalizes first, so the file is never a watermarked draft (decision 1.5).
+  async function sharePdf() {
     setError(null);
-    // Open the tab now (within the user gesture) so it isn't popup-blocked, then point it
-    // at the fetched PDF once finalize + render complete.
-    const win = window.open('', '_blank');
     setFinalizing(true);
     try {
-      await ensureFinalized();
-      const blobUrl = await fetchPdfBlobUrl(reportId);
-      if (win) win.location.href = blobUrl;
-      else window.open(blobUrl, '_blank', 'noopener');
+      const r = await ensureFinalized();
+      const blob = await fetchPdfBlob(reportId);
+      const file = new File([blob], reportPdfFileName(r.projectName, r.date), {
+        type: 'application/pdf',
+      });
+      if (typeof navigator.canShare === 'function' && navigator.canShare({ files: [file] })) {
+        try {
+          await navigator.share({ files: [file], title: file.name });
+          return;
+        } catch (e) {
+          if ((e as DOMException).name === 'AbortError') return; // user dismissed the sheet
+          // NotAllowedError etc. (the gesture's transient activation can expire while
+          // finalize renders) — fall through to the named download below.
+        }
+      }
+      // Desktop / no file-share support: a named download beats an unnamed blob tab.
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = file.name;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 60_000);
     } catch (e) {
-      win?.close();
       setError((e as Error).message);
     } finally {
       setFinalizing(false);
@@ -334,10 +351,10 @@ export function ReportScreen({ reportId, online, onBack }: Props) {
           className="btn btn-soft"
           style={{ flex: 1, width: 'auto', minHeight: 56, fontSize: 15 }}
           disabled={finalizing}
-          onClick={exportPdf}
+          onClick={sharePdf}
         >
           <Icon name="doc" size={18} />
-          Export PDF
+          Share PDF
         </button>
         <button
           className="btn btn-primary"

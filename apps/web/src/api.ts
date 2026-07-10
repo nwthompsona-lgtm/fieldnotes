@@ -124,6 +124,28 @@ async function fetchBlobUrl(url: string, bearerToken?: string): Promise<string> 
   return blobUrl;
 }
 
+/** The filename every PDF surface agrees on (14d): "<Project> – <YYYY-MM-DD>.pdf",
+ *  sanitized for filesystems. Matches the server's Content-Disposition name. */
+export function reportPdfFileName(projectName: string | null | undefined, date: string): string {
+  const base = (projectName ?? '')
+    .replace(/[\\/:*?"<>|\u0000-\u001f]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  return `${(base || 'Field report').slice(0, 120)} – ${date}.pdf`;
+}
+
+/** Download a session-gated artifact as a NAMED file (14d — no tab, no "Unknown.pdf"):
+ *  fetch with the bearer → blob URL → programmatic `<a download>` click. */
+export async function downloadAuthedArtifact(url: string, filename: string): Promise<void> {
+  const blobUrl = await fetchBlobUrl(url); // self-revokes after BLOB_URL_TTL_MS
+  const a = document.createElement('a');
+  a.href = blobUrl;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+}
+
 /** Open a session-gated hosted artifact (htmlUrl / pdfUrl) in a new tab.
  *  MUST be invoked synchronously from a click handler — window.open only
  *  succeeds inside the user gesture. Rejects with ApiError when the popup was
