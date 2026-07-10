@@ -309,3 +309,110 @@ describe('per-recipient email dispatch outcome (emailError)', () => {
     expect(after.emailError).toBeUndefined(); // absent in the DTO once cleared
   });
 });
+
+describe('send persists ad-hoc recipients (14b: type once, suggest forever)', () => {
+  it('creates a directory contact under "Added from sends", attaches it to the roster, stamps contactId, and dedupes on repeat', async () => {
+    const selection = { orgIds: [], contactIds: [], adHoc: [{ name: 'Gina New', email: 'Gina@NewCo.example' }] };
+    const res = await req('POST', 'adminS', `/api/reports/${reportId}/send`, { selection });
+    expect(res.statusCode).toBe(201);
+    const send = res.json() as { recipients: Array<{ id: string; email: string }> };
+    const rec = send.recipients.find((r) => r.email === 'gina@newco.example')!;
+
+    // A directory contact now exists under the catch-all company…
+    const catchAll = (await deps.repo.listStakeholderOrgs('org_s')).find((o) => o.name === 'Added from sends')!;
+    expect(catchAll.kind).toBe('other');
+    const gina = catchAll.contacts.find((c) => c.email === 'gina@newco.example')!;
+    expect(gina.name).toBe('Gina New');
+    // …the recipient row is linked to it…
+    expect((await deps.repo.getRecipientById(rec.id))?.contactId).toBe(gina.id);
+    // …and the catch-all company joined the project roster (so the modal offers Gina next time).
+    expect((await deps.repo.listProjectStakeholders('proj_s')).map((o) => o.id)).toContain(catchAll.id);
+
+    // The remembered default is the ENRICHED selection: contactId in, raw adHoc gone.
+    const def = await deps.repo.getDistributionDefault('proj_s');
+    expect(def?.adHoc).toEqual([]);
+    expect(def?.contactIds).toContain(gina.id);
+
+    // A repeat send typing the same address reuses the contact — never a duplicate.
+    const res2 = await req('POST', 'adminS', `/api/reports/${reportId}/send`, {
+      selection: { orgIds: [], contactIds: [], adHoc: [{ name: 'Gina Again', email: 'gina@newco.example' }] },
+    });
+    expect(res2.statusCode).toBe(201);
+    const catchAll2 = (await deps.repo.listStakeholderOrgs('org_s')).find((o) => o.name === 'Added from sends')!;
+    expect(catchAll2.contacts.filter((c) => c.email === 'gina@newco.example')).toHaveLength(1);
+    const rec2 = (res2.json() as { recipients: Array<{ id: string; email: string }> }).recipients
+      .find((r) => r.email === 'gina@newco.example')!;
+    expect((await deps.repo.getRecipientById(rec2.id))?.contactId).toBe(gina.id);
+  });
+
+  it('an ad-hoc matching an existing directory contact links it (no catch-all duplicate) and attaches its real company', async () => {
+    const { repo } = deps;
+    await repo.createStakeholderOrg({ id: 'sto_off', orgId: 'org_s', name: 'Offroster Engineers', kind: 'engineer' });
+    await repo.createStakeholderContact({ id: 'c_off', stakeholderOrgId: 'sto_off', name: 'Omar Off', email: 'omar@offroster.co' });
+
+    const res = await req('POST', 'adminS', `/api/reports/${reportId}/send`, {
+      selection: { orgIds: [], contactIds: [], adHoc: [{ name: 'Typed Omar', email: 'OMAR@offroster.co' }] },
+    });
+    expect(res.statusCode).toBe(201);
+    const rec = (res.json() as { recipients: Array<{ id: string; email: string }> }).recipients
+      .find((r) => r.email === 'omar@offroster.co')!;
+    expect((await repo.getRecipientById(rec.id))?.contactId).toBe('c_off');
+    const catchAll = (await repo.listStakeholderOrgs('org_s')).find((o) => o.name === 'Added from sends')!;
+    expect(catchAll.contacts.some((c) => c.email === 'omar@offroster.co')).toBe(false);
+    expect((await repo.listProjectStakeholders('proj_s')).map((o) => o.id)).toContain('sto_off');
+  });
+
+  it('an off-roster contactId pick (typeahead) also attaches its company to the roster', async () => {
+    const { repo } = deps;
+    await repo.createStakeholderOrg({ id: 'sto_pick', orgId: 'org_s', name: 'Picked Consultants', kind: 'consultant' });
+    await repo.createStakeholderContact({ id: 'c_pick', stakeholderOrgId: 'sto_pick', name: 'Pia Pick', email: 'pia@picked.co' });
+
+    const res = await req('POST', 'adminS', `/api/reports/${reportId}/send`, {
+      selection: { orgIds: [], contactIds: ['c_pick'], adHoc: [] },
+    });
+    expect(res.statusCode).toBe(201);
+    expect((await repo.listProjectStakeholders('proj_s')).map((o) => o.id)).toContain('sto_pick');
+    expect((await repo.getDistributionDefault('proj_s'))?.contactIds).toContain('c_pick');
+  });
+
+  it('a whole-company pick of the catch-all is stored as explicit contactIds, never an orgId (it grows org-wide)', async () => {
+    const catchAll = (await deps.repo.listStakeholderOrgs('org_s')).find((o) => o.name === 'Added from sends')!;
+    expect(catchAll.contacts.length).toBeGreaterThan(0);
+    const res = await req('POST', 'adminS', `/api/reports/${reportId}/send`, {
+      selection: { orgIds: [catchAll.id], contactIds: [], adHoc: [] },
+    });
+    expect(res.statusCode).toBe(201);
+    const def = await deps.repo.getDistributionDefault('proj_s');
+    // Stored as the concrete people of the moment, so someone typed ad-hoc on ANOTHER
+    // project later never silently joins this project's remembered selection.
+    expect(def?.orgIds).not.toContain(catchAll.id);
+    for (const c of catchAll.contacts) expect(def?.contactIds).toContain(c.id);
+  });
+
+  it('a directory bookkeeping failure never fails the send; the person rides the default as raw adHoc', async () => {
+    const original = deps.repo.createStakeholderContact;
+    deps.repo.createStakeholderContact = async () => {
+      throw new Error('db hiccup');
+    };
+    try {
+      const res = await req('POST', 'adminS', `/api/reports/${reportId}/send`, {
+        selection: { orgIds: [], contactIds: [], adHoc: [{ name: 'Flaky Fred', email: 'fred@flaky.co' }] },
+      });
+      expect(res.statusCode).toBe(201);
+      const rec = (res.json() as { recipients: Array<{ id: string; email: string }> }).recipients
+        .find((r) => r.email === 'fred@flaky.co')!;
+      expect((await deps.repo.getRecipientById(rec.id))?.contactId ?? null).toBeNull();
+      const def = await deps.repo.getDistributionDefault('proj_s');
+      expect(def?.adHoc).toEqual([{ name: 'Flaky Fred', email: 'fred@flaky.co' }]);
+    } finally {
+      deps.repo.createStakeholderContact = original;
+    }
+  });
+
+  it('rejects invalid ad-hoc entries (blank name) — they would become permanent directory rows', async () => {
+    const res = await req('POST', 'adminS', `/api/reports/${reportId}/send`, {
+      selection: { orgIds: [], contactIds: [], adHoc: [{ name: '  ', email: 'blank@x.co' }] },
+    });
+    expect(res.statusCode).toBe(400);
+  });
+});

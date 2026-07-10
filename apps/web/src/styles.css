@@ -1441,6 +1441,47 @@ audio {
   padding: 3px 10px;
   display: inline-block;
 }
+/* Send-modal typeahead (14b): directory matches under the + Add person form. */
+.typeahead {
+  margin-top: 8px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  overflow: hidden;
+}
+.typeahead-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 9px 12px;
+  border: 0;
+  background: var(--surface);
+  color: inherit;
+  font: inherit;
+  font-size: 14px;
+  text-align: left;
+  cursor: pointer;
+}
+.typeahead-item + .typeahead-item {
+  border-top: 1px solid var(--line);
+}
+.typeahead-item:hover,
+.typeahead-item:focus-visible {
+  background: var(--surface-2);
+}
+.typeahead-name {
+  font-weight: 600;
+}
+.typeahead-item .email {
+  color: var(--muted);
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.typeahead-item .schip {
+  margin-left: auto;
+  flex: none;
+}
 
 /* ── Delivery panel ───────────────────────────────────────────────────────── */
 

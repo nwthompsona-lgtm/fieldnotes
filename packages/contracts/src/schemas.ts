@@ -429,6 +429,16 @@ export const SetProjectRosterRequest = z.object({
 });
 export type SetProjectRosterRequest = z.infer<typeof SetProjectRosterRequest>;
 
+/** Send-modal typeahead row (Phase 14b): an org-wide directory contact match, so a
+ *  person saved on any project can be picked again anywhere without retyping. */
+export const StakeholderSuggestion = z.object({
+  contactId: z.string(),
+  name: z.string(),
+  email: z.string().email(),
+  companyName: z.string(),
+});
+export type StakeholderSuggestion = z.infer<typeof StakeholderSuggestion>;
+
 // Settings — members & projects (Phase 10 / F2). Additive management DTOs for the
 // Settings screens; server-side guards (org admin / canManageProject) do the enforcing.
 
@@ -462,10 +472,13 @@ export type OrgMemberRow = z.infer<typeof OrgMemberRow>;
 
 /** Who to send to: whole stakeholder orgs, specific contacts, and typed one-offs. */
 export const SendSelection = z.object({
-  orgIds: z.array(z.string()).default([]),
-  contactIds: z.array(z.string()).default([]),
+  orgIds: z.array(z.string().max(100)).max(500).default([]),
+  contactIds: z.array(z.string().max(100)).max(500).default([]),
+  // Same limits as the directory's own contact DTO — since 14b these entries are
+  // persisted as directory contacts, not just emailed once.
   adHoc: z
-    .array(z.object({ name: z.string(), email: z.string().email() }))
+    .array(z.object({ name: z.string().trim().min(1).max(200), email: z.string().email().max(254) }))
+    .max(200)
     .default([]),
 });
 export type SendSelection = z.infer<typeof SendSelection>;

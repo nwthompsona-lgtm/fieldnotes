@@ -122,6 +122,48 @@ describe('project roster + distribution default', () => {
   });
 });
 
+describe('stakeholder suggestions (send-modal typeahead, 14b)', () => {
+  beforeAll(async () => {
+    // A second org_d company (deliberately NOT on any roster: suggestions are org-wide)
+    // and a same-named contact in org E to prove tenancy scoping.
+    const sid = (await req('POST', 'adminD', '/api/orgs/org_d/stakeholders', { name: 'Steel Sub Co', kind: 'sub' })).json().id;
+    await req('POST', 'adminD', `/api/orgs/org_d/stakeholders/${sid}/contacts`, { name: 'Marta Iron', email: 'marta@steelsub.co' });
+    const esid = (await req('POST', 'adminE', '/api/orgs/org_e/stakeholders', { name: 'E Steel', kind: 'sub' })).json().id;
+    await req('POST', 'adminE', `/api/orgs/org_e/stakeholders/${esid}/contacts`, { name: 'Marta Other', email: 'marta@esteel.co' });
+  });
+
+  it('send-capable roles search the whole org directory, matching name OR email', async () => {
+    for (const who of ['adminD', 'pmD', 'superD']) {
+      const r = await req('GET', who, '/api/projects/proj_d/stakeholder-suggestions?q=marta');
+      expect(r.statusCode).toBe(200);
+      expect(r.json()).toMatchObject([
+        { name: 'Marta Iron', email: 'marta@steelsub.co', companyName: 'Steel Sub Co' },
+      ]);
+    }
+    const byEmail = await req('GET', 'pmD', '/api/projects/proj_d/stakeholder-suggestions?q=steelsub.co');
+    expect(byEmail.json()).toHaveLength(1);
+  });
+
+  it('under 2 chars → empty; non-send-capable member → 404 (no leak); anon → 401', async () => {
+    expect((await req('GET', 'pmD', '/api/projects/proj_d/stakeholder-suggestions?q=m')).json()).toEqual([]);
+    expect((await req('GET', 'pmD', '/api/projects/proj_d/stakeholder-suggestions')).json()).toEqual([]);
+    expect((await req('GET', 'memberD', '/api/projects/proj_d/stakeholder-suggestions?q=marta')).statusCode).toBe(404);
+    expect((await req('GET', null, '/api/projects/proj_d/stakeholder-suggestions?q=marta')).statusCode).toBe(401);
+  });
+
+  it("never returns another org's contacts, and LIKE metachars don't wildcard", async () => {
+    expect((await req('GET', 'pmD', '/api/projects/proj_d/stakeholder-suggestions?q=esteel')).json()).toEqual([]);
+    // "%%" must be a literal match attempt, not match-everything.
+    expect((await req('GET', 'pmD', '/api/projects/proj_d/stakeholder-suggestions?q=%25%25')).json()).toEqual([]);
+  });
+
+  it('a duplicated ?q=&q= (array, no querystring schema) is coerced — not a 500', async () => {
+    const r = await req('GET', 'pmD', '/api/projects/proj_d/stakeholder-suggestions?q=marta&q=marta');
+    expect(r.statusCode).toBe(200);
+    expect(r.json()).toEqual([]);
+  });
+});
+
 describe('deleting a directory entry never orphans past deliveries (§1.2)', () => {
   it('keeps the recipient row with its denormalized email/name; contact_id → null', async () => {
     const { repo } = deps;

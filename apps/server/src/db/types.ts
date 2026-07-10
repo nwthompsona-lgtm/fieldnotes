@@ -276,11 +276,37 @@ export interface Repo {
   ): Promise<void>;
   deleteStakeholderContact(id: string): Promise<void>;
   getContactsByIds(ids: string[]): Promise<Array<StakeholderContact & { orgName: string }>>;
+  /** Directory contacts in `orgId` whose (normalized) email is in `emails` — the send
+   *  route's reuse check, so an ad-hoc recipient already in the directory gets linked
+   *  instead of duplicated. Email isn't unique; callers keep the first match. */
+  findContactsByEmails(
+    orgId: string,
+    emails: string[],
+  ): Promise<Array<{ contactId: string; stakeholderOrgId: string; name: string; email: string }>>;
+  /** Oldest stakeholder org named `name` in `orgId`'s directory, or null. */
+  getStakeholderOrgIdByName(orgId: string, name: string): Promise<string | null>;
+  /** Find `name` in `orgId`'s directory or create it — the send route's catch-all
+   *  company for ad-hoc recipients ("Added from sends"). Returns the stakeholder org id. */
+  findOrCreateStakeholderOrgByName(
+    orgId: string,
+    name: string,
+    kind: StakeholderKind,
+  ): Promise<string>;
+  /** Case-insensitive name/email substring search over `orgId`'s whole directory, capped —
+   *  the Send-modal typeahead (Phase 14b). */
+  searchStakeholderContacts(
+    orgId: string,
+    q: string,
+    limit: number,
+  ): Promise<Array<{ contactId: string; name: string; email: string; companyName: string }>>;
 
   // project roster + distribution defaults (D-8)
   listProjectStakeholders(projectId: string): Promise<StakeholderOrg[]>; // roster, with contacts
   /** Replaces the roster wholesale (set semantics). */
   setProjectStakeholders(projectId: string, stakeholderOrgIds: string[]): Promise<void>;
+  /** Adds one company to a project's roster if absent (no-op on the unique conflict) —
+   *  the send route's auto-attach, so people picked once show up in the modal next time. */
+  addProjectStakeholder(projectId: string, stakeholderOrgId: string): Promise<void>;
   getDistributionDefault(projectId: string): Promise<SendSelection | null>;
   setDistributionDefault(projectId: string, selection: SendSelection): Promise<void>;
 
@@ -303,12 +329,13 @@ export interface Repo {
     }>,
   ): Promise<void>;
   /** Resolve a SendSelection's org/contact ids to concrete contacts, scoped to `orgId`
-   *  (cross-org ids resolve to nothing). Deduped by contact id; adHoc is added by the route. */
+   *  (cross-org ids resolve to nothing). Deduped by contact id; adHoc is added by the
+   *  route. stakeholderOrgId rides along for the send route's roster auto-attach. */
   resolveSelectionContacts(
     orgId: string,
     stakeholderOrgIds: string[],
     contactIds: string[],
-  ): Promise<Array<{ contactId: string; name: string; email: string }>>;
+  ): Promise<Array<{ contactId: string; stakeholderOrgId: string; name: string; email: string }>>;
   getRecipientByToken(token: string): Promise<(RecipientRow & { reportId: string }) | null>;
   /** By recipient id (for revoke/resend), with the owning report id for a tenancy check. */
   getRecipientById(id: string): Promise<(RecipientRow & { reportId: string }) | null>;

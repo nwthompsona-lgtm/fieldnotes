@@ -3,12 +3,25 @@
  * from the project's stakeholder ROSTER as selectable company rows (checkbox selects the
  * whole company, indeterminate when partial; expand to pick contacts), pre-checked from
  * the project's remembered distribution default (D-8), plus typed one-off "+ Add person"
- * recipients. Footer shows the live count; Send is disabled at 0. Success shows the
- * confirmation state with a View-delivery handoff.
+ * recipients. Typing in the add-person form typeahead-searches the org's whole directory
+ * (14b) — picked off-roster people render as "From the directory" rows; brand-new people
+ * are persisted server-side on send, so nobody is ever typed twice. Footer shows the live
+ * count; Send is disabled at 0. Success shows the confirmation state with a View-delivery
+ * handoff.
  */
 import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
-import type { Report, ReportSend, StakeholderOrg } from '@fieldreport/contracts';
-import { getRoster, getDistributionDefault, sendReport } from '../authApi';
+import type {
+  Report,
+  ReportSend,
+  StakeholderOrg,
+  StakeholderSuggestion,
+} from '@fieldreport/contracts';
+import {
+  getRoster,
+  getDistributionDefault,
+  getStakeholderSuggestions,
+  sendReport,
+} from '../authApi';
 import { useWorkspace } from '../workspace';
 import { Modal } from './Modal';
 import { Loading } from './ui';
@@ -95,9 +108,14 @@ export function SendModal({
   const [prefilled, setPrefilled] = useState(false);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [adHoc, setAdHoc] = useState<AdHoc[]>([]);
+  // Directory people picked via the typeahead whose company isn't on the roster — they
+  // need their own visible rows (their ids live in `selected` like roster contacts).
+  const [extras, setExtras] = useState<StakeholderSuggestion[]>([]);
   const [personName, setPersonName] = useState('');
   const [personEmail, setPersonEmail] = useState('');
   const [addingPerson, setAddingPerson] = useState(false);
+  const [query, setQuery] = useState('');
+  const [suggestions, setSuggestions] = useState<StakeholderSuggestion[]>([]);
   const [message, setMessage] = useState('');
   const [sending, setSending] = useState(false);
   const [done, setDone] = useState<ReportSend | null>(null);
@@ -108,6 +126,11 @@ export function SendModal({
   const [rosterReloadKey, setRosterReloadKey] = useState(0);
 
   // Load the roster and the remembered default together; pre-check the last selection.
+  // The default is applied ONCE (appliedDefault) and MERGED into existing state — this
+  // effect re-runs on the error-state Retry, and the user may already have picked
+  // people via the typeahead / typed one-offs while the roster was down; a wholesale
+  // replace would silently drop them from the count and the send.
+  const appliedDefault = useRef(false);
   useEffect(() => {
     let alive = true;
     setRosterError(null);
@@ -115,19 +138,30 @@ export function SendModal({
       .then(([r, def]) => {
         if (!alive) return;
         setRoster(r);
-        if (def) {
+        const valid = new Set(r.flatMap((o) => o.contacts.map((c) => c.id)));
+        // Typeahead picks made while the roster was unloaded all landed in `extras`;
+        // any that turn out to be roster people get their own checkbox row instead.
+        setExtras((l) => l.filter((e) => !valid.has(e.contactId)));
+        if (def && !appliedDefault.current) {
+          appliedDefault.current = true;
           const pre = new Set<string>(def.contactIds);
           for (const orgId of def.orgIds) {
             const org = r.find((o) => o.id === orgId);
             for (const c of org?.contacts ?? []) pre.add(c.id);
           }
           // Only keep ids that still exist in the roster.
-          const valid = new Set(r.flatMap((o) => o.contacts.map((c) => c.id)));
-          const kept = new Set([...pre].filter((id) => valid.has(id)));
-          if (kept.size > 0) {
-            setSelected(kept);
-            setPrefilled(true);
+          const kept = [...pre].filter((id) => valid.has(id));
+          if (kept.length > 0) setSelected((s) => new Set([...s, ...kept]));
+          // Legacy defaults (pre-14b) can still carry raw typed one-offs — restore them
+          // too instead of silently dropping people from "your last send".
+          if (def.adHoc.length > 0) {
+            setAdHoc((l) => {
+              const have = new Set(l.map((p) => p.email.toLowerCase()));
+              const add = def.adHoc.filter((a) => !have.has(a.email.toLowerCase()));
+              return add.length ? [...l, ...add.map((a) => ({ name: a.name, email: a.email }))] : l;
+            });
           }
+          if (kept.length > 0 || def.adHoc.length > 0) setPrefilled(true);
         }
       })
       .catch((e) => alive && setRosterError(e instanceof Error ? e.message : String(e)));
@@ -157,14 +191,69 @@ export function SendModal({
       return next;
     });
 
+  // Typeahead (14b): typing a name or email searches the org's whole directory —
+  // debounced, min 2 chars, stale responses dropped via the cleanup flag.
+  useEffect(() => {
+    const q = query.trim();
+    if (q.length < 2) {
+      setSuggestions([]);
+      return;
+    }
+    let alive = true;
+    const t = setTimeout(() => {
+      getStakeholderSuggestions(report.projectId, q)
+        .then((s) => alive && setSuggestions(s))
+        .catch(() => alive && setSuggestions([]));
+    }, 250);
+    return () => {
+      alive = false;
+      clearTimeout(t);
+    };
+  }, [query, report.projectId]);
+
+  const rosterIds = useMemo(
+    () => new Set((roster ?? []).flatMap((o) => o.contacts.map((c) => c.id))),
+    [roster],
+  );
+
+  const pickSuggestion = (s: StakeholderSuggestion) => {
+    setSelected((sel) => new Set(sel).add(s.contactId));
+    if (!rosterIds.has(s.contactId)) {
+      setExtras((l) => (l.some((e) => e.contactId === s.contactId) ? l : [...l, s]));
+    }
+    setPersonName('');
+    setPersonEmail('');
+    setQuery('');
+  };
+
+  const removeExtra = (contactId: string) => {
+    setExtras((l) => l.filter((e) => e.contactId !== contactId));
+    setSelected((sel) => {
+      const next = new Set(sel);
+      next.delete(contactId);
+      return next;
+    });
+  };
+
   const addPerson = (e: FormEvent) => {
     e.preventDefault();
     const name = personName.trim();
     const email = personEmail.trim();
     if (!name || !email) return;
-    setAdHoc((l) => [...l, { name, email }]);
+    // Skip a duplicate of someone already picked (typed one-off, typeahead extra, or a
+    // checked roster contact) — the server would dedupe the email anyway, but adding it
+    // here would over-count the footer and list the person twice.
+    const emailLc = email.toLowerCase();
+    const already =
+      adHoc.some((p) => p.email.toLowerCase() === emailLc) ||
+      extras.some((s) => s.email.toLowerCase() === emailLc) ||
+      (roster ?? []).some((o) =>
+        o.contacts.some((c) => selected.has(c.id) && c.email.toLowerCase() === emailLc),
+      );
+    if (!already) setAdHoc((l) => [...l, { name, email }]);
     setPersonName('');
     setPersonEmail('');
+    setQuery('');
     setAddingPerson(false);
   };
 
@@ -311,12 +400,12 @@ export function SendModal({
       ) : (
         <>
           {prefilled && <span className="prefill-note">Pre-filled from your last send</span>}
-          {roster.length === 0 && adHoc.length === 0 && (
+          {roster.length === 0 && adHoc.length === 0 && extras.length === 0 && (
             <div className="empty" style={{ padding: '28px 16px', marginTop: 12 }}>
-              <h2 style={{ fontSize: 16 }}>No stakeholders on this project yet</h2>
+              <h2 style={{ fontSize: 16 }}>No recipients on this project yet</h2>
               <p className="small">
-                Add people below, or set up the project roster in Settings → Stakeholders
-                (admins).
+                Add people below — anyone you add is saved to this project and suggested
+                everywhere next time.
               </p>
             </div>
           )}
@@ -344,6 +433,32 @@ export function SendModal({
       {/* One-off recipients + message stay usable even when the roster load failed. */}
       {(roster || rosterError) && (
         <>
+          {extras.length > 0 && (
+            <div className="sel-org">
+              <div className="sel-org-head" style={{ cursor: 'default' }}>
+                <span className="sel-org-name">From the directory</span>
+                <span className="sel-count">{extras.length} added</span>
+              </div>
+              <div className="sel-contacts">
+                {extras.map((s) => (
+                  <div className="sel-contact" key={s.contactId}>
+                    <span>{s.name}</span>
+                    <span className="email">{s.email}</span>
+                    <span className="schip schip-proc">{s.companyName}</span>
+                    <span className="spacer" style={{ flex: 1 }} />
+                    <button
+                      type="button"
+                      className="btn btn-ghost btn-sm"
+                      onClick={() => removeExtra(s.contactId)}
+                    >
+                      Remove
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
           {adHoc.length > 0 && (
             <div className="sel-org">
               <div className="sel-org-head" style={{ cursor: 'default' }}>
@@ -370,38 +485,77 @@ export function SendModal({
           )}
 
           {addingPerson ? (
-            <form className="inline-form" onSubmit={addPerson}>
-              <div className="grow">
-                <span className="field-name">Name</span>
-                <input
-                  className="input"
-                  type="text"
-                  value={personName}
-                  onChange={(e) => setPersonName(e.target.value)}
-                  required
-                />
-              </div>
-              <div className="grow">
-                <span className="field-name">Email</span>
-                <input
-                  className="input"
-                  type="email"
-                  value={personEmail}
-                  onChange={(e) => setPersonEmail(e.target.value)}
-                  required
-                />
-              </div>
-              <button type="submit" className="btn btn-secondary btn-sm">
-                Add
-              </button>
-              <button
-                type="button"
-                className="btn btn-ghost btn-sm"
-                onClick={() => setAddingPerson(false)}
-              >
-                Cancel
-              </button>
-            </form>
+            <>
+              <form className="inline-form" onSubmit={addPerson}>
+                <div className="grow">
+                  <span className="field-name">Name</span>
+                  <input
+                    className="input"
+                    type="text"
+                    value={personName}
+                    onChange={(e) => {
+                      setPersonName(e.target.value);
+                      setQuery(e.target.value);
+                    }}
+                    required
+                  />
+                </div>
+                <div className="grow">
+                  <span className="field-name">Email</span>
+                  <input
+                    className="input"
+                    type="email"
+                    value={personEmail}
+                    onChange={(e) => {
+                      setPersonEmail(e.target.value);
+                      setQuery(e.target.value);
+                    }}
+                    required
+                  />
+                </div>
+                <button type="submit" className="btn btn-secondary btn-sm">
+                  Add
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-ghost btn-sm"
+                  onClick={() => {
+                    setAddingPerson(false);
+                    setPersonName('');
+                    setPersonEmail('');
+                    setQuery('');
+                  }}
+                >
+                  Cancel
+                </button>
+              </form>
+              {(() => {
+                const shown = suggestions.filter((s) => !selected.has(s.contactId));
+                return shown.length > 0 ? (
+                  <div className="typeahead" role="listbox" aria-label="People your team has added before">
+                    {shown.map((s) => (
+                      <button
+                        type="button"
+                        role="option"
+                        aria-selected={false}
+                        className="typeahead-item"
+                        key={s.contactId}
+                        onClick={() => pickSuggestion(s)}
+                      >
+                        <span className="typeahead-name">{s.name}</span>
+                        <span className="email">{s.email}</span>
+                        <span className="schip schip-proc">{s.companyName}</span>
+                      </button>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="muted small" style={{ margin: '6px 0 0' }}>
+                    Typing searches people your team has added before — new people are
+                    saved for next time.
+                  </p>
+                );
+              })()}
+            </>
           ) : (
             <button
               type="button"

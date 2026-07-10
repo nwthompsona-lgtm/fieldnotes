@@ -3,7 +3,7 @@
  * rows in/out. Upload is idempotent on walkId (a retried upload returns the existing
  * report rather than duplicating). Implements the Repo interface in db/types.ts.
  */
-import { eq, and, or, asc, desc, inArray, isNull, sql } from 'drizzle-orm';
+import { eq, and, or, asc, desc, ilike, inArray, isNull, sql } from 'drizzle-orm';
 import type {
   Report,
   ReportEdit,
@@ -1108,6 +1108,80 @@ export function makeRepo(db: Db): Repo {
       await db.delete(stakeholderContacts).where(eq(stakeholderContacts.id, id));
     },
 
+    async findContactsByEmails(orgId, emails) {
+      if (!emails.length) return [];
+      const rows = await db
+        .select({
+          contactId: stakeholderContacts.id,
+          stakeholderOrgId: stakeholderContacts.stakeholderOrgId,
+          name: stakeholderContacts.name,
+          email: stakeholderContacts.email,
+          createdAt: stakeholderContacts.createdAt,
+        })
+        .from(stakeholderContacts)
+        .innerJoin(stakeholderOrgs, eq(stakeholderContacts.stakeholderOrgId, stakeholderOrgs.id))
+        .where(
+          and(
+            eq(stakeholderOrgs.orgId, orgId),
+            inArray(stakeholderContacts.email, emails.map(normEmail)),
+          ),
+        )
+        // Oldest first, so "callers keep the first match" is deterministic when an email
+        // appears on more than one contact.
+        .orderBy(asc(stakeholderContacts.createdAt), asc(stakeholderContacts.id));
+      return rows.map(({ createdAt: _createdAt, ...r }) => r);
+    },
+
+    async getStakeholderOrgIdByName(orgId, name) {
+      const r = (
+        await db
+          .select({ id: stakeholderOrgs.id })
+          .from(stakeholderOrgs)
+          .where(and(eq(stakeholderOrgs.orgId, orgId), eq(stakeholderOrgs.name, name)))
+          // Oldest first: names aren't unique, so all readers must agree on one winner.
+          .orderBy(asc(stakeholderOrgs.createdAt), asc(stakeholderOrgs.id))
+          .limit(1)
+      )[0];
+      return r?.id ?? null;
+    },
+
+    async findOrCreateStakeholderOrgByName(orgId, name, kind) {
+      const existing = (
+        await db
+          .select({ id: stakeholderOrgs.id })
+          .from(stakeholderOrgs)
+          .where(and(eq(stakeholderOrgs.orgId, orgId), eq(stakeholderOrgs.name, name)))
+          .orderBy(asc(stakeholderOrgs.createdAt), asc(stakeholderOrgs.id))
+          .limit(1)
+      )[0];
+      if (existing) return existing.id;
+      const id = newId('sto');
+      await db.insert(stakeholderOrgs).values({ id, orgId, name, kind });
+      return id;
+    },
+
+    async searchStakeholderContacts(orgId, q, limit) {
+      // Escape LIKE metachars so a literal "%"/"_" in the query can't match everything.
+      const needle = `%${q.replace(/[\\%_]/g, (ch) => `\\${ch}`)}%`;
+      return db
+        .select({
+          contactId: stakeholderContacts.id,
+          name: stakeholderContacts.name,
+          email: stakeholderContacts.email,
+          companyName: stakeholderOrgs.name,
+        })
+        .from(stakeholderContacts)
+        .innerJoin(stakeholderOrgs, eq(stakeholderContacts.stakeholderOrgId, stakeholderOrgs.id))
+        .where(
+          and(
+            eq(stakeholderOrgs.orgId, orgId),
+            or(ilike(stakeholderContacts.name, needle), ilike(stakeholderContacts.email, needle)),
+          ),
+        )
+        .orderBy(asc(stakeholderContacts.name))
+        .limit(limit);
+    },
+
     async getContactsByIds(ids) {
       if (!ids.length) return [];
       const rows = await db
@@ -1172,6 +1246,15 @@ export function makeRepo(db: Db): Repo {
       });
     },
 
+    async addProjectStakeholder(projectId, stakeholderOrgId) {
+      await db
+        .insert(projectStakeholders)
+        .values({ id: newId('psk'), projectId, stakeholderOrgId })
+        .onConflictDoNothing({
+          target: [projectStakeholders.projectId, projectStakeholders.stakeholderOrgId],
+        });
+    },
+
     async getDistributionDefault(projectId) {
       const r = (
         await db
@@ -1227,12 +1310,22 @@ export function makeRepo(db: Db): Repo {
       if (contactIds.length) terms.push(inArray(stakeholderContacts.id, contactIds));
       if (!terms.length) return [];
       const rows = await db
-        .select({ id: stakeholderContacts.id, name: stakeholderContacts.name, email: stakeholderContacts.email })
+        .select({
+          id: stakeholderContacts.id,
+          stakeholderOrgId: stakeholderContacts.stakeholderOrgId,
+          name: stakeholderContacts.name,
+          email: stakeholderContacts.email,
+        })
         .from(stakeholderContacts)
         .innerJoin(stakeholderOrgs, eq(stakeholderContacts.stakeholderOrgId, stakeholderOrgs.id))
         .where(and(eq(stakeholderOrgs.orgId, orgId), or(...terms)));
       // Dedupe: a contact can match both a whole-org pick and an explicit contactId pick.
-      const byId = new Map(rows.map((r) => [r.id, { contactId: r.id, name: r.name, email: r.email }]));
+      const byId = new Map(
+        rows.map((r) => [
+          r.id,
+          { contactId: r.id, stakeholderOrgId: r.stakeholderOrgId, name: r.name, email: r.email },
+        ]),
+      );
       return [...byId.values()];
     },
 

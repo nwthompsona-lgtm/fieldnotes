@@ -31,6 +31,7 @@ import type {
   SendSelection,
   StakeholderContact,
   StakeholderOrg,
+  StakeholderSuggestion,
   UpdateStakeholderContactRequest,
   UpdateStakeholderOrgRequest,
 } from '@fieldreport/contracts';
@@ -197,6 +198,16 @@ export function setRoster(
 
 export function getDistributionDefault(projectId: string): Promise<SendSelection | null> {
   return authed<SendSelection | null>(`/api/projects/${enc(projectId)}/distribution-default`);
+}
+
+/** Send-modal typeahead (14b): org-wide directory matches for a 2+ char query. */
+export function getStakeholderSuggestions(
+  projectId: string,
+  q: string,
+): Promise<StakeholderSuggestion[]> {
+  return authed<StakeholderSuggestion[]>(
+    `/api/projects/${enc(projectId)}/stakeholder-suggestions?q=${encodeURIComponent(q)}`,
+  );
 }
 
 // ── Stakeholder directory (§7, org admin) ───────────────────────────────────────

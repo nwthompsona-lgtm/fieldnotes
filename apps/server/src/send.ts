@@ -26,6 +26,9 @@ import { shareEmail, sendBestEffort } from './email/index.js';
 import { escapeHtml } from './html.js';
 import type { ReportAccessMeta } from './auth/authz.js';
 
+/** Directory bucket for recipients typed ad-hoc into the Send modal (14b). */
+const ADHOC_COMPANY = 'Added from sends';
+
 export function registerSendRoutes(app: FastifyInstance, deps: ServerDeps): void {
   const { repo, storage, authz, config } = deps;
   const base = config.publicBaseUrl;
@@ -123,14 +126,60 @@ export function registerSendRoutes(app: FastifyInstance, deps: ServerDeps): void
       // Resolve the selection → concrete recipients (tenancy-safe), then add ad-hoc one-offs,
       // deduped by normalized email (a directory contact wins over a typed duplicate).
       const dir = await repo.resolveSelectionContacts(orgId, selection.orgIds, selection.contactIds);
-      const byEmail = new Map<string, { contactId?: string; name: string; email: string }>();
+      const byEmail = new Map<
+        string,
+        { contactId?: string; stakeholderOrgId?: string; name: string; email: string }
+      >();
       for (const c of dir) byEmail.set(normalizeEmail(c.email), c);
       for (const a of selection.adHoc) {
         const key = normalizeEmail(a.email);
         if (!byEmail.has(key)) byEmail.set(key, { name: a.name, email: a.email });
       }
+      if (!byEmail.size) return reply.code(400).send({ error: 'no recipients selected' });
+
+      // A person typed once should be selectable forever after (pilot feedback 14b):
+      // persist each ad-hoc recipient as a directory contact — reusing an existing
+      // contact with the same email instead of duplicating — bucketed under a
+      // found-or-created "Added from sends" company, then auto-attach every involved
+      // company to the project roster (idempotent) so ad-hoc adds and off-roster
+      // typeahead picks show up in the Send modal next time. ALL of it is best-effort
+      // bookkeeping: a directory/roster failure must never fail the send itself —
+      // un-persisted people simply stay ad-hoc (and ride the default as adHoc below).
+      let catchAllId: string | null = null;
+      try {
+        const adHocEntries = [...byEmail.entries()].filter(([, r]) => !r.contactId);
+        if (adHocEntries.length) {
+          const existing = await repo.findContactsByEmails(orgId, adHocEntries.map(([key]) => key));
+          const existingByEmail = new Map<string, (typeof existing)[number]>();
+          for (const c of existing) if (!existingByEmail.has(c.email)) existingByEmail.set(c.email, c);
+          for (const [key, r] of adHocEntries) {
+            const found = existingByEmail.get(key);
+            if (found) {
+              byEmail.set(key, { ...r, contactId: found.contactId, stakeholderOrgId: found.stakeholderOrgId });
+            } else {
+              catchAllId ??= await repo.findOrCreateStakeholderOrgByName(orgId, ADHOC_COMPANY, 'other');
+              const contactId = newId('stc');
+              await repo.createStakeholderContact({
+                id: contactId,
+                stakeholderOrgId: catchAllId,
+                name: r.name,
+                email: r.email,
+              });
+              byEmail.set(key, { ...r, contactId, stakeholderOrgId: catchAllId });
+            }
+          }
+        }
+        const involvedCompanies = new Set(
+          [...byEmail.values()].map((r) => r.stakeholderOrgId).filter((x): x is string => !!x),
+        );
+        for (const soId of involvedCompanies) {
+          await repo.addProjectStakeholder(report.projectId, soId);
+        }
+      } catch (err) {
+        req.log.error({ err }, 'persisting ad-hoc recipients failed (send continues)');
+      }
+
       const recipients = [...byEmail.values()];
-      if (!recipients.length) return reply.code(400).send({ error: 'no recipients selected' });
 
       // Sending finalizes (export = finalize): render + flip to reviewed if still a draft.
       if (meta.status !== 'reviewed') {
@@ -155,8 +204,30 @@ export function registerSendRoutes(app: FastifyInstance, deps: ServerDeps): void
         })),
       );
 
-      // Remember this selection as the project's default (D-8).
-      await repo.setDistributionDefault(report.projectId, selection);
+      // Remember this selection as the project's default (D-8) — in enriched form: the
+      // ad-hoc recipients were just persisted as directory contacts, so store their
+      // contactIds instead of raw typed entries. Whole-company picks stay as orgIds
+      // (they keep tracking future roster additions); contacts already covered by an
+      // orgId pick are dropped as redundant. EXCEPT the "Added from sends" catch-all:
+      // it accumulates people from every project org-wide, so a whole-company pick of
+      // it stored as an orgId would silently grow the default with strangers added
+      // elsewhere — its people are always stored as explicit contactIds. Anyone the
+      // bookkeeping failed to persist (no contactId) stays a raw adHoc entry.
+      if (!catchAllId && selection.orgIds.length) {
+        catchAllId = await repo
+          .getStakeholderOrgIdByName(orgId, ADHOC_COMPANY)
+          .catch(() => null);
+      }
+      const coveringOrgIds = selection.orgIds.filter((id) => id !== catchAllId);
+      await repo.setDistributionDefault(report.projectId, {
+        orgIds: coveringOrgIds,
+        contactIds: recipients
+          .filter((r) => r.contactId && !(r.stakeholderOrgId && coveringOrgIds.includes(r.stakeholderOrgId)))
+          .map((r) => r.contactId!),
+        adHoc: recipients
+          .filter((r) => !r.contactId)
+          .map((r) => ({ name: r.name, email: r.email })),
+      });
 
       // Emails are best-effort + per-recipient: one bad address never fails the whole send.
       for (const r of minted) await emailRecipient(req, report, r, r.token, expiresAt, message);

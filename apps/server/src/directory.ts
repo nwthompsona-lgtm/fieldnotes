@@ -200,6 +200,25 @@ export function registerDirectoryRoutes(app: FastifyInstance, deps: ServerDeps):
     },
   );
 
+  // Send-modal typeahead (Phase 14b): org-WIDE directory search, so a person saved on any
+  // project can be picked again anywhere. Same read gate as the roster (send-capable,
+  // 404 no-leak) — deliberately NOT the admin-only org directory gate: pms/supers only
+  // ever see name/email/company of people the org already emails reports to.
+  app.get<{ Params: { projectId: string }; Querystring: { q?: string } }>(
+    '/api/projects/:projectId/stakeholder-suggestions',
+    { preHandler: requireAuth },
+    async (req, reply) => {
+      if (!(await requireSendCapable(req, reply))) return reply;
+      // Coerce: a duplicated ?q=&q= arrives as an array (no schema on the querystring)
+      // and calling .trim() on it would 500.
+      const q = (typeof req.query.q === 'string' ? req.query.q : '').trim();
+      if (q.length < 2) return [];
+      const orgId = await repo.getProjectOrgId(req.params.projectId);
+      if (!orgId) return [];
+      return repo.searchStakeholderContacts(orgId, q, 8);
+    },
+  );
+
   app.get<{ Params: { projectId: string } }>(
     '/api/projects/:projectId/distribution-default',
     { preHandler: requireAuth },
