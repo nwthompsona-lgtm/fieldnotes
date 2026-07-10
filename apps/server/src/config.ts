@@ -31,6 +31,12 @@ const forceLocal = bool(env.FIELDREPORT_LOCAL);
 export const config = {
   port: Number(env.PORT ?? 8787),
   host: env.HOST ?? '0.0.0.0',
+  /** True on Render (it injects RENDER=true) — used to fail fast on configs that are
+   *  survivable locally but destructive on an ephemeral container (e.g. no DATABASE_URL
+   *  silently meaning pglite-on-container-disk: every deploy would wipe all data). */
+  isRender: bool(env.RENDER),
+  /** The explicit local/hermetic switch (also forces pglite + local storage below). */
+  forceLocal,
   /** Absolute base used to build htmlUrl/pdfUrl + media URLs. Falls back to Render's
    *  auto-injected RENDER_EXTERNAL_URL so no manual PUBLIC_BASE_URL/redeploy is needed. */
   publicBaseUrl: (

@@ -39,15 +39,14 @@ function Row({
       <div className="deliv-who">
         <div className="deliv-name">{r.name}</div>
         <div className="deliv-org">{r.org ? `${r.org} · ${r.email}` : r.email}</div>
+        {r.emailError && (
+          // Provider rejected the email (contracts 1.2.x `emailError`) — show the raw
+          // reason in full: a hover-only tooltip was unreadable on phones, which is
+          // where the pilot actually noticed. The Resend button is the retry path.
+          <div className="deliv-err">{r.emailError}</div>
+        )}
       </div>
-      {r.emailError && (
-        // Provider rejected the email (contracts 1.2.x `emailError`) — make it visible
-        // instead of silently looking sent; hover for the raw provider message. The
-        // existing Resend button is the retry path.
-        <span className="schip schip-danger" title={r.emailError}>
-          Email failed
-        </span>
-      )}
+      {r.emailError && <span className="schip schip-danger">Email failed</span>}
       {revoked ? (
         <span className="deliv-status revoked">Revoked</span>
       ) : r.firstOpenedAt ? (
@@ -75,7 +74,7 @@ export function DeliveryPage() {
   const [sends, setSends] = useState<ReportSend[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const [notice, setNotice] = useState<string | null>(null);
+  const [notice, setNotice] = useState<{ kind: 'info' | 'error'; text: string } | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -94,12 +93,15 @@ export function DeliveryPage() {
     void load();
   }, [load]);
 
-  const act = async (fn: () => Promise<unknown>, doneMsg: string) => {
+  /** Run an action; `fn` may return a failure notice (email best-effort outcomes) —
+   *  those show as an inline error banner, NOT the page-level ErrorState (the page
+   *  data is fine; only the email was rejected). */
+  const act = async (fn: () => Promise<string | void>, doneMsg: string) => {
     setBusy(true);
     setNotice(null);
     try {
-      await fn();
-      setNotice(doneMsg);
+      const failure = await fn();
+      setNotice(failure ? { kind: 'error', text: failure } : { kind: 'info', text: doneMsg });
       await load();
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -138,7 +140,11 @@ export function DeliveryPage() {
         </Link>
       </div>
 
-      {notice && <div className="alert alert-info mb-24">{notice}</div>}
+      {notice && (
+        <div className={`alert ${notice.kind === 'error' ? 'alert-error' : 'alert-info'} mb-24`}>
+          {notice.text}
+        </div>
+      )}
 
       {sends.length === 0 && (
         <div className="empty">
@@ -173,10 +179,15 @@ export function DeliveryPage() {
                   className="btn btn-secondary btn-sm"
                   disabled={busy}
                   onClick={() =>
-                    act(
-                      () => Promise.all(unopened.map((r) => resendRecipient(id, r.id))),
-                      `Resent to ${unopened.length} unopened ${unopened.length === 1 ? 'recipient' : 'recipients'}.`,
-                    )
+                    act(async () => {
+                      const results = await Promise.all(
+                        unopened.map((r) => resendRecipient(id, r.id)),
+                      );
+                      const failed = results.filter((o) => !o.ok).length;
+                      if (failed) {
+                        return `${failed} of ${results.length} emails failed to send — see the rows below for the provider's reason.`;
+                      }
+                    }, `Resent to ${unopened.length} unopened ${unopened.length === 1 ? 'recipient' : 'recipients'}.`)
                   }
                 >
                   Resend to unopened
@@ -189,7 +200,12 @@ export function DeliveryPage() {
                   key={r.id}
                   r={r}
                   busy={busy}
-                  onResend={() => act(() => resendRecipient(id, r.id), `Resent to ${r.email}.`)}
+                  onResend={() =>
+                    act(async () => {
+                      const o = await resendRecipient(id, r.id);
+                      if (!o.ok) return `Email to ${r.email} failed: ${o.error ?? 'provider rejected it'}`;
+                    }, `Resent to ${r.email}.`)
+                  }
                   onRevoke={() =>
                     act(() => revokeRecipient(id, r.id), `Revoked ${r.email}'s link.`)
                   }

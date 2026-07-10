@@ -63,7 +63,7 @@ export function registerSendRoutes(app: FastifyInstance, deps: ServerDeps): void
     token: string,
     expiresAt: Date,
     message?: string,
-  ): Promise<void> => {
+  ): Promise<{ ok: true } | { ok: false; error: string }> => {
     const sender = req.auth!.user;
     const senderName = sender.name?.trim() || sender.email;
     const rendered = shareEmail({
@@ -90,6 +90,7 @@ export function registerSendRoutes(app: FastifyInstance, deps: ServerDeps): void
     await repo
       .setRecipientEmailError(rec.id, outcome.ok ? null : outcome.error)
       .catch((err) => req.log.error({ err, recipientId: rec.id }, 'recording email outcome failed'));
+    return outcome;
   };
 
   // ── Send ────────────────────────────────────────────────────────────────────
@@ -207,8 +208,21 @@ export function registerSendRoutes(app: FastifyInstance, deps: ServerDeps): void
         expiresAt = new Date(Date.now() + 30 * 86_400_000);
         await repo.refreshRecipientToken(req.params.rid, { token, expiresAt });
       }
-      await emailRecipient(req, report, { id: rec.id, name: rec.name, email: rec.email }, token, expiresAt);
-      return { ok: true, recipientId: rec.id, resentTo: rec.email };
+      // Report the email outcome honestly — the old unconditional ok:true made a
+      // provider rejection look like a successful resend until the panel refetched.
+      const outcome = await emailRecipient(
+        req,
+        report,
+        { id: rec.id, name: rec.name, email: rec.email },
+        token,
+        expiresAt,
+      );
+      return {
+        ok: outcome.ok,
+        error: outcome.ok ? undefined : outcome.error,
+        recipientId: rec.id,
+        resentTo: rec.email,
+      };
     },
   );
 

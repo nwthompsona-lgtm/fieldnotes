@@ -161,10 +161,23 @@ export function revokeRecipient(reportId: string, recipientId: string): Promise<
   });
 }
 
-export function resendRecipient(reportId: string, recipientId: string): Promise<void> {
-  return authed<void>(`/api/reports/${enc(reportId)}/recipients/${enc(recipientId)}/resend`, {
-    method: 'POST',
-  });
+/** Resend outcome — ok:false carries the provider's rejection message (the email is
+ *  best-effort server-side, so the HTTP call itself still succeeds; read the flag). */
+export interface ResendOutcome {
+  ok: boolean;
+  error?: string;
+  recipientId: string;
+  resentTo: string;
+}
+
+export function resendRecipient(
+  reportId: string,
+  recipientId: string,
+): Promise<ResendOutcome> {
+  return authed<ResendOutcome>(
+    `/api/reports/${enc(reportId)}/recipients/${enc(recipientId)}/resend`,
+    { method: 'POST' },
+  );
 }
 
 // ── Roster + distribution default (§7) ──────────────────────────────────────────

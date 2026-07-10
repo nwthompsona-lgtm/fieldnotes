@@ -275,13 +275,33 @@ describe('per-recipient email dispatch outcome (emailError)', () => {
     }
   }, 30_000);
 
-  it('a later successful resend clears the recorded failure', async () => {
+  it('resend reports the email outcome honestly: ok:false + the provider message', async () => {
+    const sends = await deps.repo.listSendsForReport(reportId);
+    const rec = sends.flatMap((s) => s.recipients).find((r) => r.email === FAIL_EMAIL)!;
+    const originalSend = deps.email.send.bind(deps.email);
+    deps.email.send = async () => {
+      throw new Error('provider rejected: still not verified');
+    };
+    try {
+      const res = await req('POST', 'adminS', `/api/reports/${reportId}/recipients/${rec.id}/resend`);
+      expect(res.statusCode).toBe(200); // best-effort: the request worked, the email did not
+      const body = res.json() as { ok: boolean; error?: string; resentTo: string };
+      expect(body.ok).toBe(false);
+      expect(body.error).toBe('provider rejected: still not verified');
+      expect(body.resentTo).toBe(FAIL_EMAIL);
+    } finally {
+      deps.email.send = originalSend;
+    }
+  });
+
+  it('a later successful resend clears the recorded failure and returns ok:true', async () => {
     const sends = await deps.repo.listSendsForReport(reportId);
     const rec = sends.flatMap((s) => s.recipients).find((r) => r.email === FAIL_EMAIL)!;
     expect(rec.emailError).toBeTruthy(); // still failed from the previous test
 
     const res = await req('POST', 'adminS', `/api/reports/${reportId}/recipients/${rec.id}/resend`);
     expect(res.statusCode).toBe(200);
+    expect((res.json() as { ok: boolean }).ok).toBe(true);
     expect((await deps.repo.getRecipientById(rec.id))?.emailError).toBeNull();
     const after = (await deps.repo.listSendsForReport(reportId))
       .flatMap((s) => s.recipients)

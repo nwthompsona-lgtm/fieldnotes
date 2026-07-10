@@ -5,7 +5,8 @@
  */
 import { describe, it, expect } from 'vitest';
 import { makeEmail, makeMockEmail, shareEmail, inviteEmail } from '../src/email/index.js';
-import { fromWithDisplayName, formatAddress } from '../src/email/types.js';
+import { fromWithDisplayName, formatAddress, parseFromAddress } from '../src/email/types.js';
+import { bootConfigErrors } from '../src/deps.js';
 import { config, type AppConfig } from '../src/config.js';
 
 describe('mock driver', () => {
@@ -58,6 +59,68 @@ describe('from/display-name helpers', () => {
     );
     expect(formatAddress({ email: 'x@y.com', name: 'X Y' })).toBe('"X Y" <x@y.com>');
     expect(formatAddress({ email: 'x@y.com' })).toBe('x@y.com');
+  });
+});
+
+describe('parseFromAddress (EMAIL_FROM boot validation)', () => {
+  it('accepts the two documented shapes', () => {
+    expect(parseFromAddress('reports@fieldreport.app')).toEqual({ email: 'reports@fieldreport.app' });
+    expect(parseFromAddress('FieldReport <reports@fieldreport.app>')).toEqual({
+      name: 'FieldReport',
+      email: 'reports@fieldreport.app',
+    });
+    expect(parseFromAddress('"Field Report" <r@x.app>')).toEqual({ name: 'Field Report', email: 'r@x.app' });
+    expect(parseFromAddress('  reports@fieldreport.app  ')).toEqual({ email: 'reports@fieldreport.app' });
+    expect(parseFromAddress('<reports@fieldreport.app>')).toEqual({ email: 'reports@fieldreport.app' });
+  });
+
+  it('rejects the dashboard-typo shapes that would break every runtime send', () => {
+    expect(parseFromAddress('FieldReport reports@x.app')).toBeNull(); // missing <>
+    expect(parseFromAddress('reports@x')).toBeNull(); // no TLD
+    expect(parseFromAddress('"reports@x.app"')).toBeNull(); // wholly quoted
+    expect(parseFromAddress('Name <not-an-email>')).toBeNull();
+    expect(parseFromAddress('Name <a@b.c> extra')).toBeNull();
+    expect(parseFromAddress('')).toBeNull();
+  });
+});
+
+describe('bootConfigErrors', () => {
+  const base = JSON.parse(JSON.stringify(config)) as AppConfig;
+  const make = (over: {
+    isRender?: boolean;
+    forceLocal?: boolean;
+    dbUrl?: string;
+    provider?: 'resend' | 'mock';
+    from?: string;
+  }): AppConfig =>
+    ({
+      ...base,
+      isRender: over.isRender ?? false,
+      forceLocal: over.forceLocal ?? false,
+      db: { ...base.db, url: over.dbUrl },
+      email: {
+        provider: over.provider ?? 'mock',
+        resendApiKey: undefined,
+        from: over.from ?? 'FieldReport <r@x.app>',
+      },
+    }) as AppConfig;
+
+  it('on Render without DATABASE_URL: fatal (ephemeral pglite would eat the data)', () => {
+    expect(bootConfigErrors(make({ isRender: true }))).toHaveLength(1);
+    expect(bootConfigErrors(make({ isRender: true }))[0]).toMatch(/DATABASE_URL/);
+  });
+  it('FIELDREPORT_LOCAL=1 is the explicit opt-out; local dev is always fine', () => {
+    expect(bootConfigErrors(make({ isRender: true, forceLocal: true }))).toHaveLength(0);
+    expect(bootConfigErrors(make({ isRender: false }))).toHaveLength(0);
+    expect(bootConfigErrors(make({ isRender: true, dbUrl: 'postgres://x' }))).toHaveLength(0);
+  });
+  it('malformed EMAIL_FROM with the resend driver: fatal on Render only', () => {
+    const bad = { provider: 'resend' as const, from: 'FieldReport reports@x.app' };
+    expect(bootConfigErrors(make({ isRender: true, dbUrl: 'postgres://x', ...bad }))).toHaveLength(1);
+    expect(bootConfigErrors(make({ isRender: false, ...bad }))).toHaveLength(0); // warns instead
+    expect(
+      bootConfigErrors(make({ isRender: true, dbUrl: 'postgres://x', provider: 'mock', from: 'garbage' })),
+    ).toHaveLength(0); // mock driver never emails anyone
   });
 });
 

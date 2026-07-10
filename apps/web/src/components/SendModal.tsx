@@ -199,13 +199,47 @@ export function SendModal({
 
   // ── Post-send confirmation ────────────────────────────────────────────────
   if (done) {
+    // The send API is best-effort per recipient: links are always minted, but the
+    // provider may have rejected some (or all) of the emails. Say so HERE — a fully
+    // failed send used to show pure success until the user happened to open Delivery.
+    const failed = done.recipients.filter((r) => r.emailError);
+    const allFailed = failed.length > 0 && failed.length === done.recipients.length;
     return (
-      <Modal title="Report sent" onClose={() => onSent(done)}>
+      <Modal
+        title={allFailed ? 'Report ready — emails failed' : 'Report sent'}
+        onClose={() => onSent(done)}
+      >
         <p>
-          Sent to <b>{done.recipients.length}</b>{' '}
-          {done.recipients.length === 1 ? 'person' : 'people'}. Each got their own private
-          link — you can watch opens and revoke access from Delivery.
+          {allFailed ? (
+            <>
+              Private links were created for <b>{done.recipients.length}</b>{' '}
+              {done.recipients.length === 1 ? 'person' : 'people'}, but{' '}
+              <b>none of the emails could be sent</b>.
+            </>
+          ) : (
+            <>
+              Sent to <b>{done.recipients.length}</b>{' '}
+              {done.recipients.length === 1 ? 'person' : 'people'}. Each got their own
+              private link — you can watch opens and revoke access from Delivery.
+            </>
+          )}
         </p>
+        {failed.length > 0 && (
+          <div className="alert alert-error" role="alert">
+            <p style={{ margin: 0 }}>
+              <b>
+                {failed.length} of {done.recipients.length}{' '}
+                {failed.length === 1 ? 'email' : 'emails'} failed to send.
+              </b>
+            </p>
+            <p className="small" style={{ margin: '6px 0 0' }}>
+              {failed[0]!.emailError}
+            </p>
+            <p className="small" style={{ margin: '6px 0 0' }}>
+              You can retry each one from Delivery once the cause is fixed.
+            </p>
+          </div>
+        )}
         <div className="row mt-16">
           <button type="button" className="btn btn-primary" onClick={() => onSent(done)}>
             View delivery

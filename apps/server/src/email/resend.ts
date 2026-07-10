@@ -11,6 +11,29 @@ import {
   type EmailDriver,
 } from './types.js';
 
+/** Is `domain` verified in this Resend account? 'unknown' on any API failure (never
+ *  block boot / health on a Resend outage). Note resend.dev (the onboarding sender)
+ *  is never in the account's domain list → false, which is the right signal: an
+ *  unverified account is in testing mode and can only email its own owner. */
+export async function checkResendDomainVerified(
+  apiKey: string,
+  domain: string,
+): Promise<boolean | 'unknown'> {
+  try {
+    const client = new Resend(apiKey);
+    const { data, error } = await client.domains.list();
+    if (error || !data) return 'unknown';
+    const rows = (Array.isArray(data) ? data : (data.data ?? [])) as Array<{
+      name?: string;
+      status?: string;
+    }>;
+    const d = domain.toLowerCase();
+    return rows.some((r) => r.name?.toLowerCase() === d && r.status === 'verified');
+  } catch {
+    return 'unknown';
+  }
+}
+
 export function makeResendEmail(opts: { apiKey: string; from: string }): EmailDriver {
   const client = new Resend(opts.apiKey);
   return {

@@ -50,5 +50,6 @@ export async function buildTestDeps(overrides?: Partial<AppConfig>): Promise<Tes
     authz: makeAuthz(repo),
     // Direct mock (not makeEmail) so tests can reach `.sent` without a cast.
     email: makeMockEmail('.data/test-email'),
+    emailHealth: { fromDomain: null, domainVerified: 'unknown' },
   };
 }

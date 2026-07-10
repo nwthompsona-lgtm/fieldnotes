@@ -16,9 +16,20 @@ import { makeSynthesizer } from './synthesis/index.js';
 import { makeSessions, type SessionManager } from './auth/sessions.js';
 import { makeAuthz, type Authz } from './auth/authz.js';
 import { makeEmail, type EmailDriver } from './email/index.js';
+import { parseFromAddress } from './email/types.js';
+import { checkResendDomainVerified } from './email/resend.js';
 import { hash } from './auth/passwords.js';
 import { newId } from './ids.js';
 import { PILOT_GLOSSARY } from './pilot.js';
+
+/** Live email-config health for /healthz: the EMAIL_FROM domain and whether it is
+ *  verified in the Resend account (refreshed once at boot, in the background). One curl
+ *  after any dashboard change answers "will real recipients actually get email?" —
+ *  false means Resend testing mode: only the account owner's own address receives. */
+export interface EmailHealth {
+  fromDomain: string | null;
+  domainVerified: boolean | 'unknown';
+}
 
 export interface ServerDeps {
   config: AppConfig;
@@ -30,6 +41,33 @@ export interface ServerDeps {
   sessions: SessionManager;
   authz: Authz;
   email: EmailDriver;
+  emailHealth: EmailHealth;
+}
+
+/** Boot-time config validation. Returns fatal problems; buildDeps throws on any.
+ *  Exported pure for tests. */
+export function bootConfigErrors(config: AppConfig): string[] {
+  const errors: string[] = [];
+  // On Render with no DATABASE_URL, the silent pglite fallback writes to the container's
+  // ephemeral disk — every deploy/restart would destroy ALL data. Refuse to boot;
+  // FIELDREPORT_LOCAL=1 remains the explicit opt-in (e.g. pglite on a persistent disk).
+  if (config.isRender && !config.forceLocal && !config.db.url) {
+    errors.push(
+      'DATABASE_URL is not set. On Render the embedded-pglite fallback lives on the ' +
+        "container's ephemeral disk and is WIPED on every deploy. Set DATABASE_URL " +
+        '(or set FIELDREPORT_LOCAL=1 to explicitly opt into pglite).',
+    );
+  }
+  // A malformed EMAIL_FROM means Resend rejects EVERY send at runtime with no boot-time
+  // symptom — fail fast where email is real (Render + resend driver), warn elsewhere.
+  if (config.email.provider === 'resend' && !parseFromAddress(config.email.from)) {
+    const msg =
+      `EMAIL_FROM is malformed: ${JSON.stringify(config.email.from)} — expected ` +
+      '"email@example.com" or "Name <email@example.com>".';
+    if (config.isRender) errors.push(msg);
+    else console.warn(`[email] ${msg}`);
+  }
+  return errors;
 }
 
 /**
@@ -109,11 +147,38 @@ export async function seedPilot(
 }
 
 export async function buildDeps(config: AppConfig): Promise<ServerDeps> {
+  const bootErrors = bootConfigErrors(config);
+  if (bootErrors.length) {
+    throw new Error(`fatal config problems:\n- ${bootErrors.join('\n- ')}`);
+  }
+
   const db = await getDb(config);
   await ensureSchema(db);
   const repo = makeRepo(db);
 
   await seedPilot(repo, config);
+
+  // Email-config health: resolve the from-domain's Resend verification in the
+  // background (never blocks boot; 'unknown' until/unless the API answers).
+  const from = parseFromAddress(config.email.from);
+  const emailHealth: EmailHealth = {
+    fromDomain: from ? from.email.split('@')[1]!.toLowerCase() : null,
+    domainVerified: 'unknown',
+  };
+  if (config.email.provider === 'resend' && config.email.resendApiKey && emailHealth.fromDomain) {
+    void checkResendDomainVerified(config.email.resendApiKey, emailHealth.fromDomain).then(
+      (v) => {
+        emailHealth.domainVerified = v;
+        if (v === false) {
+          console.warn(
+            `[email] EMAIL_FROM domain "${emailHealth.fromDomain}" is NOT verified in this ` +
+              'Resend account — sends to anyone but the account owner will be rejected. ' +
+              'Verify the domain at resend.com/domains.',
+          );
+        }
+      },
+    );
+  }
 
   return {
     config,
@@ -125,5 +190,6 @@ export async function buildDeps(config: AppConfig): Promise<ServerDeps> {
     sessions: makeSessions(repo, config),
     authz: makeAuthz(repo),
     email: makeEmail(config),
+    emailHealth,
   };
 }

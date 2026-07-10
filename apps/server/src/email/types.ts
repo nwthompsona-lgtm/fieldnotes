@@ -34,5 +34,23 @@ export function fromWithDisplayName(base: string, displayName: string): string {
   return `${JSON.stringify(displayName)} <${addr}>`;
 }
 
+/** Loose-but-useful address shape check: something@something.tld, no spaces/brackets. */
+const ADDR_RE = /^[^\s@<>"]+@[^\s@<>"]+\.[^\s@<>"]+$/;
+
+/** Parse an EMAIL_FROM value: `email@example.com` or `Name <email@example.com>`.
+ *  Returns null on anything else (stray quotes, missing bracket, trailing text) so the
+ *  boot check can fail loudly instead of Resend rejecting every send at runtime. */
+export function parseFromAddress(base: string): { name?: string; email: string } | null {
+  const s = base.trim();
+  const m = /^(.*)<([^<>]+)>$/.exec(s);
+  if (m) {
+    const email = m[2]!.trim();
+    if (!ADDR_RE.test(email)) return null;
+    const rawName = m[1]!.trim().replace(/^"(.*)"$/, '$1').trim();
+    return rawName ? { name: rawName, email } : { email };
+  }
+  return ADDR_RE.test(s) ? { email: s } : null;
+}
+
 export const formatAddress = (a: EmailAddress): string =>
   a.name ? `${JSON.stringify(a.name)} <${a.email}>` : a.email;

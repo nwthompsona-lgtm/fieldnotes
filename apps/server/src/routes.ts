@@ -110,6 +110,9 @@ export function registerRoutes(app: FastifyInstance, deps: ServerDeps): void {
 
   app.get('/healthz', async () => ({
     ok: true,
+    // Which DB driver is live: 'pglite' on a deployed service means ephemeral data —
+    // the boot guard should have prevented it, but surface it so one curl can verify.
+    db: config.db.url ? 'postgres' : 'pglite',
     storage: storage.name,
     stt: deps.transcriber.name,
     // Active STT model (nova-2 vs nova-3) — confirm the transcription tuning after a deploy.
@@ -119,6 +122,10 @@ export function registerRoutes(app: FastifyInstance, deps: ServerDeps): void {
     model: deps.synthesizer.name === 'claude' ? config.synthesis.model : null,
     langsmith: config.langsmith.enabled,
     email: deps.email.name,
+    // EMAIL_FROM's domain + its Resend verification (false = testing mode: only the
+    // account owner receives; fix at resend.com/domains). 'unknown' = not yet checked.
+    emailFromDomain: deps.emailHealth.fromDomain,
+    emailDomainVerified: deps.emailHealth.domainVerified,
     // Render injects RENDER_GIT_COMMIT — lets us confirm which commit is live after a deploy.
     commit: process.env.RENDER_GIT_COMMIT?.slice(0, 7) ?? 'dev',
     node: process.version,
