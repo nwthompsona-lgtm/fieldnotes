@@ -1,8 +1,9 @@
 /**
- * The Flux app shell (design handoff §App shell): glassy sticky top bar with the brand
- * pin, the ORG and PROJECT switchers as primary navigation, theme toggle, and the user
- * menu (gradient avatar → Account / Members & settings / Sign out). Routed pages render
- * below via <Outlet/>.
+ * The Flux app shell (design handoff §App shell, reshaped by Phase 14c): glassy sticky
+ * top bar with the brand pin, ONE combined context pill (project over org — pilot
+ * feedback 5/6: two pills + five fixed controls starved the labels to ~43px on phones),
+ * the camera shortcut into /capture, and the user menu (gradient avatar → theme toggle /
+ * Account / Members & settings / Sign out). Routed pages render below via <Outlet/>.
  */
 import { Link, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { useTheme } from '../hooks/useTheme';
@@ -11,25 +12,29 @@ import { Pin } from './Logo';
 import { Avatar } from './flux';
 import { Dropdown, Chevron, Check } from './Dropdown';
 
-function ThemeToggle() {
+/** Theme toggle as an avatar-menu row (14c — it left the bar to make label room). */
+function ThemeMenuItem() {
   const { theme, toggle } = useTheme();
   return (
     <button
-      className="icon-btn"
-      onClick={toggle}
-      aria-label={theme === 'dark' ? 'Switch to Daylight' : 'Switch to Nightshift'}
       type="button"
+      className="menu-item"
+      role="menuitem"
+      // Deliberately does NOT close the menu: the theme flips live under it, and the
+      // next tap (or tap-out) is the user's call.
+      onClick={toggle}
     >
       {theme === 'dark' ? (
-        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" aria-hidden="true">
           <circle cx="12" cy="12" r="4" />
           <path d="M12 2.5v2M12 19.5v2M4.2 4.2l1.4 1.4M18.4 18.4l1.4 1.4M2.5 12h2M19.5 12h2M4.2 19.8l1.4-1.4M18.4 5.6l1.4-1.4" />
         </svg>
       ) : (
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
           <path d="M20 14.5A8.2 8.2 0 0 1 9.4 4 7 7 0 1 0 20 14.5Z" />
         </svg>
       )}
+      {theme === 'dark' ? 'Switch to Daylight' : 'Switch to Nightshift'}
     </button>
   );
 }
@@ -55,52 +60,18 @@ export function AppShell() {
             <Pin size={19} />
           </Link>
 
-          {/* Org switcher */}
+          {/* ONE combined context pill (14c): project as the primary line, org beneath.
+              A single menu holds both sections — projects first (the frequent switch). */}
           {ws.org && (
             <Dropdown
-              label="Switch organization"
+              label="Switch project or organization"
+              triggerClass="switcher-btn ctx-btn"
               trigger={
                 <>
-                  <span className="swb-label">{ws.org.name}</span>
-                  <Chevron />
-                </>
-              }
-            >
-              {(close) => (
-                <>
-                  <div className="menu-head">Organizations</div>
-                  {ws.orgs.map((o) => (
-                    <button
-                      key={o.id}
-                      type="button"
-                      className="menu-item"
-                      role="menuitem"
-                      onClick={() => {
-                        close();
-                        if (o.id !== ws.org?.id) {
-                          ws.switchOrg(o.id);
-                          navigate('/');
-                        }
-                      }}
-                    >
-                      {o.name}
-                      {o.id === ws.org?.id && <Check />}
-                    </button>
-                  ))}
-                </>
-              )}
-            </Dropdown>
-          )}
-
-          {ws.org && <span className="sep-dot">·</span>}
-
-          {/* Project switcher */}
-          {ws.org && (
-            <Dropdown
-              label="Switch project"
-              trigger={
-                <>
-                  <span className="swb-label">{currentProject?.name ?? 'Projects'}</span>
+                  <span className="ctx-labels">
+                    <span className="ctx-project">{currentProject?.name ?? 'Projects'}</span>
+                    <span className="ctx-org">{ws.org.name}</span>
+                  </span>
                   <Chevron />
                 </>
               }
@@ -127,6 +98,26 @@ export function AppShell() {
                   {ws.projects && ws.projects.length === 0 && (
                     <div className="menu-note">No projects yet.</div>
                   )}
+                  <div className="menu-sep" />
+                  <div className="menu-head">Organizations</div>
+                  {ws.orgs.map((o) => (
+                    <button
+                      key={o.id}
+                      type="button"
+                      className="menu-item"
+                      role="menuitem"
+                      onClick={() => {
+                        close();
+                        if (o.id !== ws.org?.id) {
+                          ws.switchOrg(o.id);
+                          navigate('/');
+                        }
+                      }}
+                    >
+                      {o.name}
+                      {o.id === ws.org?.id && <Check />}
+                    </button>
+                  ))}
                 </>
               )}
             </Dropdown>
@@ -146,7 +137,6 @@ export function AppShell() {
                 <circle cx="12" cy="13.5" r="3.2" />
               </svg>
             </Link>
-            <ThemeToggle />
             {/* User menu */}
             <Dropdown
               label="Account menu"
@@ -158,6 +148,7 @@ export function AppShell() {
                 <>
                   <div className="menu-head">{ws.user.name ?? ws.user.email}</div>
                   <div className="menu-note">{ws.user.email}</div>
+                  <ThemeMenuItem />
                   <Link to="/capture" className="menu-item" role="menuitem" onClick={close}>
                     Start a walk
                   </Link>
