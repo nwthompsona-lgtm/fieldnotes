@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { isStandalone } from './lib/install';
+import { MoveScreen } from './components/MoveScreen';
 import { Onboarding } from './components/Onboarding';
 import { CaptureFlow } from './components/CaptureFlow';
 import { HomeScreen } from './components/HomeScreen';
@@ -49,6 +50,10 @@ export function App() {
   const [pendingWalkId, setPendingWalkId] = useState<string | null>(null);
   const [screen, setScreen] = useState<Screen>('home');
   const [reportId, setReportId] = useState<string | null>(null);
+  // 15c: this origin is retired — the default face is the move screen. The old app
+  // stays reachable behind it ONLY to finish syncing walk data (per-origin IndexedDB
+  // can't move to the new origin).
+  const [stayForSync, setStayForSync] = useState(false);
 
   const [obsCount, setObsCount] = useState(0);
   const [bytes, setBytes] = useState(0);
@@ -131,6 +136,20 @@ export function App() {
     setWalkId(active.id);
     setScreen('home');
     bump();
+  }
+
+  // 15c — the retirement gate comes FIRST: whoever lands here (the installed legacy
+  // PWA above all) gets sent to the new origin. "Data at risk" = a finished walk
+  // waiting to sync OR observations on the active walk; those users may drop back
+  // into the old app to finish, everyone else only gets the move screen.
+  if (!stayForSync) {
+    return (
+      <MoveScreen
+        dataAtRisk={pendingWalkId !== null || obsCount > 0}
+        checking={gateOpen && walkId === null}
+        onStay={() => setStayForSync(true)}
+      />
+    );
   }
 
   if (!gateOpen) {
