@@ -779,6 +779,16 @@ opens the native share sheet directly; Watson eliminated from all defaults.
 
 **14f Dev hygiene.** Delete the persistence-probe account/org from the dev DB
 (created 2026-07-09 for the item-1 test: persistence-probe-20260709@fieldreport.test).
+*Resolved 2026-07-10 as KEEP-for-now:* there is no org-deletion endpoint (safe cascade
+across projects/reports/recipients + R2 objects is real work, not a quick win), the dev
+DB is dashboard-credentialed only, and the probe is the only tenant on dev where the
+14a failure UI and Phase 15 flows can be verified without touching the pilot's org.
+Retire it after Phase 15 verification: either (a) run in the Neon dev console —
+`DELETE FROM orgs WHERE id = 'org_1fa2f5f8156f4402a86de749cd467f2c';`
+`DELETE FROM users WHERE email = 'persistence-probe-20260709@fieldreport.test';`
+(org cascade removes projects/reports/sends/directory; the report's R2 objects under
+`reports/r-5bd421b4daddba1e1a8c/` need a manual bucket delete) — or (b) fold it into a
+future self-serve org-deletion feature if one gets scoped.
 
 ### Phase 15 — Seamless one-app (structural)
 
@@ -808,7 +818,7 @@ Execution-time inputs still needed from the user: the real org + project names f
 14e's dashboard rename; and (fast path for 14a) the email-failed chip's hover text
 read from a desktop browser, else the chip fix surfaces it on mobile first.
 
-Status: 🟡 in progress — ✅ 14a (`ac5a011`) · ✅ 14b (`7238c6b`) · ✅ 14c (`e910336`) · ✅ 14d (`6055f13`) · ✅ 14e · next 14f, then Phase 15.
+Status: ✅ Phase 14 complete — 14a (`ac5a011`) · 14b (`7238c6b`) · 14c (`e910336`) · 14d (`6055f13`) · 14e (`2f49042`) · 14f resolved as keep-probe-until-Phase-15-verified (see above). Phase 15 next.
 User actions still owed: verify a domain at resend.com/domains + set `EMAIL_FROM` on it
 (the actual email unblock); for the Watson rename on dev, set `PILOT_ORG_NAME` /
 `PILOT_PROJECT_NAME` on the Render dashboard to the real names (they apply at the next
