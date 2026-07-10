@@ -212,7 +212,11 @@ export function ReportScreen({ reportId, online, onBack }: Props) {
 
   return (
     <div className="screen">
-      <Header onBack={onBack} status={report.status} />
+      <Header
+        onBack={onBack}
+        onViewInApp={() => navigate(reviewUrl(reportId))}
+        status={report.status}
+      />
 
       <div className="screen-body">
         <div>
@@ -381,7 +385,16 @@ export function ReportScreen({ reportId, online, onBack }: Props) {
   );
 }
 
-function Header({ onBack, status }: { onBack: () => void; status?: Report['status'] }) {
+function Header({
+  onBack,
+  onViewInApp,
+  status,
+}: {
+  onBack: () => void;
+  /** Open this report in the management surface (15b) — same app, plain navigation. */
+  onViewInApp?: () => void;
+  status?: Report['status'];
+}) {
   const subtitle = status === 'reviewed' ? 'Reviewed · ready to share' : 'Draft · review before sending';
   return (
     <div className="sticky-header" style={{ borderBottom: '1px solid var(--line)' }}>
@@ -397,6 +410,11 @@ function Header({ onBack, status }: { onBack: () => void; status?: Report['statu
             {subtitle}
           </div>
         </div>
+        {onViewInApp && (
+          <button className="icon-btn" onClick={onViewInApp} aria-label="View in reports">
+            <Icon name="doc" size={17} />
+          </button>
+        )}
         <span className="chip chip-primary" style={{ padding: '6px 11px' }}>
           <Icon name="sparkle" size={13} />
           AI draft

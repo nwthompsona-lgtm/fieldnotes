@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { Link } from 'react-router-dom';
 import { detectPlatform, type Platform } from '../lib/install';
 import { Logo } from './Icon';
 
@@ -183,6 +184,23 @@ export function Onboarding({ onEnter, onContinueAnyway }: Props) {
         >
           I've added it — start walking
         </button>
+        {/* Escape hatch (15b): the gate protects CAPTURE (durable iOS storage needs
+            the install) — viewing reports doesn't need it, so never trap someone who
+            landed on /capture from a desktop or a shared link. */}
+        <Link
+          to="/"
+          style={{
+            display: 'block',
+            textAlign: 'center',
+            marginTop: 14,
+            fontSize: 14,
+            fontWeight: 600,
+            color: 'var(--muted)',
+            textDecoration: 'none',
+          }}
+        >
+          Just here for the reports? Open the dashboard →
+        </Link>
       </div>
     </div>
   );

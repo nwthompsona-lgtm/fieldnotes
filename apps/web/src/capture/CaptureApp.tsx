@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 // Scoped stylesheet: postcss-prefix-selector rewrites every rule in capture.css under
 // `.cap` (see apps/web/postcss.config.cjs), so these globals can't leak into the
 // management surfaces. The route wrapper in App.tsx renders <div className="cap">.
@@ -30,6 +31,7 @@ type Screen = 'home' | 'capture' | 'review' | 'report';
  *  keeps its own install gate → login → project picker → capture loop). */
 export function CaptureApp() {
   const online = useOnline();
+  const navigate = useNavigate();
   const { theme, toggle: toggleTheme } = useTheme();
 
   // Onboarding gate (spec §2). DEV escape hatch only.
@@ -209,6 +211,9 @@ export function CaptureApp() {
       pendingWalkId={pendingWalkId}
       projectName={activeProject.projectName}
       onSwitchProject={() => setRepicking(true)}
+      onViewReports={() =>
+        navigate(`/p/${encodeURIComponent(activeProject.projectId)}/reports`)
+      }
       onNewObservation={() => setScreen('capture')}
       onDone={handleFinishWalk}
       onOpenPending={() => setScreen('review')}

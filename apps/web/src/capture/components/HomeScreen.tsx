@@ -17,6 +17,8 @@ interface Props {
   /** The picked project this walk captures into (F3) — tap to switch. */
   projectName: string;
   onSwitchProject: () => void;
+  /** Into the management surface (15b): this project's reports list, same app. */
+  onViewReports: () => void;
   onNewObservation: () => void;
   onDone: () => void;
   onOpenPending: () => void;
@@ -37,6 +39,7 @@ export function HomeScreen({
   pendingWalkId,
   projectName,
   onSwitchProject,
+  onViewReports,
   onNewObservation,
   onDone,
   onOpenPending,
@@ -66,6 +69,10 @@ export function HomeScreen({
             </span>
           </div>
           <div className="header-row" style={{ gap: 8 }}>
+            {/* Out to the management surface (15b) — same app, plain navigation. */}
+            <button className="icon-btn" onClick={onViewReports} aria-label="View reports">
+              <Icon name="doc" size={18} />
+            </button>
             <button
               className="icon-btn"
               onClick={onToggleTheme}
