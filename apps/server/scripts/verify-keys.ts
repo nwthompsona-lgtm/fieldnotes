@@ -60,7 +60,7 @@ try {
   const repo = makeRepo(db);
   await repo.upsertProject({
     id: config.pilot.projectId,
-    name: config.pilot.projectName,
+    name: config.pilot.projectName ?? 'Pilot Project',
     superName: config.pilot.superName,
     glossary: [],
     baseLexiconRef: 'base-construction-v1',

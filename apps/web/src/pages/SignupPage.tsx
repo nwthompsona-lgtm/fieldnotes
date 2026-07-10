@@ -102,7 +102,7 @@ export function SignupPage() {
               type="text"
               autoComplete="organization"
               required
-              placeholder="e.g. Watson Builders"
+              placeholder="e.g. Meridian Builders"
               value={orgName}
               onChange={(e) => setOrgName(e.target.value)}
             />

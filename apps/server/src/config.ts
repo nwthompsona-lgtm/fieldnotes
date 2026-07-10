@@ -140,13 +140,17 @@ export const config = {
   },
 
   /** Pilot bootstrap (auth plan §12): the boot seed upserts this org, creates the admin
-   *  user (email+password), adopts org-less projects, and backfills report authorship. */
+   *  user (email+password), adopts org-less projects, and backfills report authorship.
+   *  Names (14e): an env-SET name is authoritative — a dashboard rename applies at the
+   *  next boot. Unset means the seed creates-if-missing under a neutral name and never
+   *  overwrites, so renames done in-app (or via a since-removed env) stick. No real
+   *  product nouns as code defaults. */
   pilot: {
     projectId: env.PILOT_PROJECT_ID ?? 'pilot-project',
-    projectName: env.PILOT_PROJECT_NAME ?? 'Watson Island',
+    projectName: env.PILOT_PROJECT_NAME,
     superName: env.PILOT_SUPER_NAME ?? 'Pilot Super',
     orgId: env.PILOT_ORG_ID ?? 'org_pilot',
-    orgName: env.PILOT_ORG_NAME ?? 'Watson Builders',
+    orgName: env.PILOT_ORG_NAME,
     superEmail: env.PILOT_SUPER_EMAIL,
     superPassword: env.PILOT_SUPER_PASSWORD,
   },

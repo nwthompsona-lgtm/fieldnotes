@@ -21,10 +21,10 @@ beforeAll(async () => {
     ...deps.config,
     pilot: {
       projectId: 'pilot-project',
-      projectName: 'Watson Island',
+      projectName: 'Meridian Tower',
       superName: 'Jake Romero',
       orgId: 'org_pilot_test',
-      orgName: 'Watson Builders',
+      orgName: 'Meridian Builders',
       superEmail: 'jake@pilot.test',
       superPassword: 'pilot-password-1',
     },
@@ -34,7 +34,7 @@ beforeAll(async () => {
   // report that has no author.
   await deps.repo.upsertProject({
     id: 'pilot-project',
-    name: 'Watson Island',
+    name: 'Meridian Tower',
     superName: 'Jake Romero',
     glossary: [],
     baseLexiconRef: 'base-construction-v1',
@@ -69,7 +69,7 @@ describe('seedPilot (§12)', () => {
 
     expect(await deps.repo.getOrg('org_pilot_test')).toEqual({
       id: 'org_pilot_test',
-      name: 'Watson Builders',
+      name: 'Meridian Builders',
     });
 
     const user = await deps.repo.getUserByEmail('jake@pilot.test');
@@ -114,5 +114,54 @@ describe('seedPilot (§12)', () => {
     await deps.repo.updateUser(user!.id, { passwordHash: 'rotated-hash' });
     await seedPilot(deps.repo, cfg, () => {});
     expect((await deps.repo.getUserById(user!.id))?.passwordHash).toBe('rotated-hash');
+  });
+});
+
+describe('seed names never clobber renames (14e)', () => {
+  const noNames = (): AppConfig =>
+    ({
+      ...cfg,
+      pilot: { ...cfg.pilot, orgName: undefined, projectName: undefined },
+    }) as AppConfig;
+
+  it('with names UNSET, an in-app rename survives every reboot', async () => {
+    await deps.repo.upsertOrg({ id: 'org_pilot_test', name: 'Renamed In App LLC' });
+    const project = (await deps.repo.getProject('pilot-project'))!;
+    await deps.repo.upsertProject({ ...project, name: 'Renamed Project' });
+
+    await seedPilot(deps.repo, noNames(), () => {});
+    expect((await deps.repo.getOrg('org_pilot_test'))?.name).toBe('Renamed In App LLC');
+    expect((await deps.repo.getProject('pilot-project'))?.name).toBe('Renamed Project');
+  });
+
+  it('an env-SET name is authoritative and renames at the next boot — keeping the glossary', async () => {
+    const project = (await deps.repo.getProject('pilot-project'))!;
+    await deps.repo.upsertProject({ ...project, glossary: ['Handset Nouns', 'Tower A'] });
+
+    await seedPilot(deps.repo, cfg, () => {}); // cfg carries Meridian names
+    expect((await deps.repo.getOrg('org_pilot_test'))?.name).toBe('Meridian Builders');
+    const after = (await deps.repo.getProject('pilot-project'))!;
+    expect(after.name).toBe('Meridian Tower');
+    expect(after.glossary).toEqual(['Handset Nouns', 'Tower A']); // name-only update
+  });
+
+  it('fresh database + no env names → neutral creations, never a product noun', async () => {
+    const fresh = await buildTestDeps();
+    const freshCfg = {
+      ...fresh.config,
+      pilot: {
+        projectId: 'p-fresh',
+        projectName: undefined,
+        superName: 'Pilot Super',
+        orgId: 'org-fresh',
+        orgName: undefined,
+        superEmail: undefined,
+        superPassword: undefined,
+      },
+    } as AppConfig;
+    await seedPilot(fresh.repo, freshCfg, () => {});
+    expect((await fresh.repo.getOrg('org-fresh'))?.name).toBe('My Organization');
+    expect((await fresh.repo.getProject('p-fresh'))?.name).toBe('Pilot Project');
+    expect((await fresh.repo.getProject('p-fresh'))?.glossary).toEqual([]);
   });
 });

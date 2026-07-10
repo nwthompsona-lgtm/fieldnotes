@@ -3,5 +3,7 @@ import { config } from '../src/config.js';
 import { buildDeps } from '../src/deps.js';
 
 await buildDeps(config); // ensures schema + upserts the pilot project
-console.log(`[seed] pilot project ready: ${config.pilot.projectId} (${config.pilot.projectName})`);
+console.log(
+  `[seed] pilot project ready: ${config.pilot.projectId} (${config.pilot.projectName ?? 'existing/neutral name kept'})`,
+);
 process.exit(0);

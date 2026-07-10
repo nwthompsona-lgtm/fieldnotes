@@ -165,7 +165,7 @@ export const Project = z.object({
   name: z.string(),
   superName: z.string(),
   /** Per-project proper nouns — where almost all STT accuracy gain lives (§8b).
-   *  e.g. ["Watson Island", "JMA", "Najib", "Lighthouse"]. */
+   *  e.g. ["Meridian Tower", "JMA", "Najib", "Lighthouse"]. */
   glossary: z.array(z.string()).default([]),
   /** Reference to the reusable base construction lexicon (§8a). */
   baseLexiconRef: z.string().default('base-construction-v1'),

@@ -71,10 +71,12 @@ services:
       # ── Pilot org + admin bootstrap for the DEV tenant (Phase 4 seed) ──
       - key: PILOT_ORG_ID
         value: org_pilot_dev
+      # Names are optional since 14e: set in the dashboard to rename at next boot;
+      # unset, the seed creates neutral names once and never overwrites renames.
       - key: PILOT_ORG_NAME
-        value: Watson Builders (dev)
+        sync: false
       - key: PILOT_PROJECT_NAME
-        value: Watson Island
+        sync: false
       - key: PILOT_SUPER_NAME
         sync: false
       - key: PILOT_SUPER_EMAIL

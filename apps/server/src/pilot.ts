@@ -1,19 +1,8 @@
 /**
- * Pilot project seed (spec §12 single-project, §8b per-project glossary). These proper
- * nouns are where almost all transcription accuracy is won — the model knows generic
- * construction vocabulary but faceplants on unrecoverable names. Edit per real pilot;
- * confirm the exact tower/area/RFI nouns with the super at handoff (DECISIONS A2).
+ * Seed glossary for a NEWLY-CREATED pilot project (spec §12, §8b). Deliberately empty
+ * since Phase 14e: proper nouns are per-real-project — they are where transcription
+ * accuracy is won, and they belong to the actual pilot's towers/areas/companies, not in
+ * code defaults that ship one customer's project names to every deployment. Set them on
+ * the project row (DB / future settings UI); the boot seed never overwrites them.
  */
-export const PILOT_GLOSSARY: string[] = [
-  'Watson Island',
-  'JMA',
-  'Najib',
-  'Lighthouse',
-  'Fort Partners',
-  // tower / area names (placeholders — confirm with the super):
-  'North Tower',
-  'South Tower',
-  'Marina Level',
-  'Podium',
-  'Amenity Deck',
-];
+export const PILOT_GLOSSARY: string[] = [];

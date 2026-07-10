@@ -81,14 +81,29 @@ export async function seedPilot(
   log: (msg: string) => void = console.warn,
 ): Promise<void> {
   // 1. Org + the pilot project row (project seed predates tenancy; org_id lands in step 3).
-  await repo.upsertOrg({ id: config.pilot.orgId, name: config.pilot.orgName });
-  await repo.upsertProject({
-    id: config.pilot.projectId,
-    name: config.pilot.projectName,
-    superName: config.pilot.superName,
-    glossary: PILOT_GLOSSARY,
-    baseLexiconRef: BASE_LEXICON_ID,
-  });
+  //    Names (14e): an env-set name is authoritative — a dashboard rename lands at the
+  //    next boot. With no env name, create-if-missing under a NEUTRAL name and leave
+  //    existing rows untouched, so a rename done in-app (or via a since-removed env) is
+  //    never clobbered back by the every-boot seed.
+  const org = await repo.getOrg(config.pilot.orgId);
+  if (!org) {
+    await repo.upsertOrg({ id: config.pilot.orgId, name: config.pilot.orgName ?? 'My Organization' });
+  } else if (config.pilot.orgName && org.name !== config.pilot.orgName) {
+    await repo.upsertOrg({ id: config.pilot.orgId, name: config.pilot.orgName });
+  }
+  const project = await repo.getProject(config.pilot.projectId);
+  if (!project) {
+    await repo.upsertProject({
+      id: config.pilot.projectId,
+      name: config.pilot.projectName ?? 'Pilot Project',
+      superName: config.pilot.superName,
+      glossary: PILOT_GLOSSARY,
+      baseLexiconRef: BASE_LEXICON_ID,
+    });
+  } else if (config.pilot.projectName && project.name !== config.pilot.projectName) {
+    // Name only: superName/glossary may have been edited since — keep them.
+    await repo.upsertProject({ ...project, name: config.pilot.projectName });
+  }
 
   // 2. Pilot admin user (email+password from env; §15.5 — rotate after first login).
   //    Identity is keyed on the email: rotating PILOT_SUPER_EMAIL between boots creates a

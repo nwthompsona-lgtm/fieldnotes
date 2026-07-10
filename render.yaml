@@ -46,7 +46,9 @@ services:
         sync: false
       - key: ADMIN_TOKEN
         sync: false
+      # Optional (14e): set in the dashboard to rename the pilot project/org at next
+      # boot; unset, the seed creates neutral names once and never overwrites renames.
       - key: PILOT_PROJECT_NAME
-        value: Watson Island
+        sync: false
       - key: PILOT_SUPER_NAME
         sync: false

@@ -19,7 +19,7 @@ const synth = makeSynthesizer(config);
 
 const input: SynthesisInput = {
   project: {
-    name: config.pilot.projectName,
+    name: config.pilot.projectName ?? 'Pilot Project',
     superName: config.pilot.superName,
     date: '2026-06-27',
     glossary: PILOT_GLOSSARY,
